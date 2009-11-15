@@ -1,0 +1,354 @@
+#! /usr/bin/env python
+
+import sys
+from datetime import datetime
+from optparse import OptionParser
+
+__version__ = '0.01'
+
+class SQL :
+    '''
+    Holds all SQL statements used by baculafs
+    '''
+
+    clients = 'SELECT Client.Name,ClientId FROM Client'
+    
+    filesets = '''
+    SELECT DISTINCT FileSet.FileSet FROM Job,
+    Client,FileSet WHERE Job.FileSetId=FileSet.FileSetId
+    AND Job.ClientId=%s AND Client.ClientId=%s 
+    ORDER BY FileSet.FileSet
+    '''
+
+    fileset = '''
+    SELECT FileSetId,FileSet,MD5,CreateTime FROM FileSet
+    WHERE FileSet="%s" ORDER BY CreateTime DESC LIMIT 1
+    '''
+
+    create_temp = '''
+    CREATE TEMPORARY TABLE temp (
+    JobId INTEGER UNSIGNED NOT NULL,
+    JobTDate BIGINT UNSIGNED,
+    ClientId INTEGER UNSIGNED,
+    Level CHAR,
+    JobFiles INTEGER UNSIGNED,
+    JobBytes BIGINT UNSIGNED,
+    StartTime TEXT,
+    VolumeName TEXT,
+    StartFile INTEGER UNSIGNED,
+    VolSessionId INTEGER UNSIGNED,
+    VolSessionTime INTEGER UNSIGNED)
+    '''
+
+    create_temp1 = '''
+    CREATE TEMPORARY TABLE temp1 (
+    JobId INTEGER UNSIGNED NOT NULL,
+    JobTDate BIGINT UNSIGNED)
+    '''
+
+    temp  = 'SELECT * FROM temp'
+
+    temp1 = 'SELECT * FROM temp1'
+
+    del_temp = 'DROP TABLE temp'
+    
+    del_temp1 = 'DROP TABLE temp1'
+
+    full_jobs_temp1 = '''
+    INSERT INTO temp1 SELECT Job.JobId,JobTdate 
+    FROM Client,Job,JobMedia,Media,FileSet WHERE Client.ClientId=%s
+    AND Job.ClientId=%s
+    AND Job.StartTime < DATETIME("%s")
+    AND Level='F' AND JobStatus IN ('T','W') AND Type='B' 
+    AND JobMedia.JobId=Job.JobId 
+    AND Media.Enabled=1 
+    AND JobMedia.MediaId=Media.MediaId 
+    AND Job.FileSetId=FileSet.FileSetId 
+    AND FileSet.FileSet="%s"
+    ORDER BY Job.JobTDate DESC LIMIT 1
+    '''
+
+    full_jobs_temp = '''
+    INSERT INTO temp SELECT Job.JobId,Job.JobTDate,
+    Job.ClientId,Job.Level,Job.JobFiles,Job.JobBytes,
+    StartTime,VolumeName,JobMedia.StartFile,VolSessionId,VolSessionTime 
+    FROM temp1,Job,JobMedia,Media WHERE temp1.JobId=Job.JobId 
+    AND Level='F' AND JobStatus IN ('T','W') AND Type='B' 
+    AND Media.Enabled=1 
+    AND JobMedia.JobId=Job.JobId 
+    AND JobMedia.MediaId=Media.MediaId
+    '''
+
+    diff_jobs_temp = '''
+    INSERT INTO temp SELECT Job.JobId,Job.JobTDate,Job.ClientId,
+    Job.Level,Job.JobFiles,Job.JobBytes,
+    Job.StartTime,Media.VolumeName,JobMedia.StartFile,
+    Job.VolSessionId,Job.VolSessionTime 
+    FROM Job,JobMedia,Media,FileSet 
+    WHERE Job.JobTDate>%d AND Job.StartTime<DATETIME("%s")
+    AND Job.ClientId=%d 
+    AND JobMedia.JobId=Job.JobId 
+    AND Media.Enabled=1 
+    AND JobMedia.MediaId=Media.MediaId 
+    AND Job.Level='D' AND JobStatus IN ('T','W') AND Type='B' 
+    AND Job.FileSetId=FileSet.FileSetId 
+    AND FileSet.FileSet="%s"
+    ORDER BY Job.JobTDate DESC LIMIT 1
+    '''
+
+    incr_jobs_temp = '''
+    INSERT INTO temp SELECT Job.JobId,Job.JobTDate,Job.ClientId,
+    Job.Level,Job.JobFiles,Job.JobBytes,
+    Job.StartTime,Media.VolumeName,JobMedia.StartFile,
+    Job.VolSessionId,Job.VolSessionTime 
+    FROM Job,JobMedia,Media,FileSet 
+    WHERE Job.JobTDate>%d AND Job.StartTime<DATETIME("%s") 
+    AND Job.ClientId=%d
+    AND Media.Enabled=1 
+    AND JobMedia.JobId=Job.JobId 
+    AND JobMedia.MediaId=Media.MediaId 
+    AND Job.Level='I' AND JobStatus IN ('T','W') AND Type='B' 
+    AND Job.FileSetId=FileSet.FileSetId 
+    AND FileSet.FileSet="%s"
+    '''
+
+    jobs = 'SELECT DISTINCT JobId,StartTime FROM temp ORDER BY StartTime ASC'
+
+    base_jobs = '''
+    SELECT DISTINCT BaseJobId
+    FROM Job JOIN BaseFiles USING (JobId)
+    WHERE Job.HasBase = 1
+    AND Job.JobId IN (%s)
+    '''
+
+    purged_jobs = '''
+    SELECT SUM(PurgedFiles) FROM Job WHERE JobId IN (%s)
+    '''
+    
+    files = '''
+    SELECT Path.Path, Filename.Name, Temp.FileIndex, Temp.JobId, LStat, MD5 
+     FROM ( %s ) AS Temp 
+     JOIN Filename ON (Filename.FilenameId = Temp.FilenameId) 
+     JOIN Path ON (Path.PathId = Temp.PathId) 
+    WHERE FileIndex > 0 
+    ORDER BY Temp.JobId, FileIndex ASC
+    '''
+
+    with_basejobs = '''
+    SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
+           File.FilenameId AS FilenameId, LStat, MD5 
+    FROM Job, File, ( 
+        SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
+          FROM ( 
+            SELECT JobTDate, PathId, FilenameId 
+              FROM File JOIN Job USING (JobId) 
+             WHERE File.JobId IN (%s) 
+              UNION ALL 
+            SELECT JobTDate, PathId, FilenameId 
+              FROM BaseFiles 
+                   JOIN File USING (FileId) 
+                   JOIN Job  ON    (BaseJobId = Job.JobId) 
+             WHERE BaseFiles.JobId IN (%s) 
+           ) AS tmp GROUP BY PathId, FilenameId 
+        ) AS T1 
+    WHERE (Job.JobId IN ( 
+             SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
+            OR Job.JobId IN (%s)) 
+      AND T1.JobTDate = Job.JobTDate 
+      AND Job.JobId = File.JobId 
+      AND T1.PathId = File.PathId 
+      AND T1.FilenameId = File.FilenameId
+    '''
+
+
+class Database :
+    '''
+    This class shields the rest of the code from the pesky details of
+    actually accessing one of the supported databases.
+    '''
+    def __init__(self, driver, database, username, password) :
+        '''
+        Initialize database driver: connect the database,
+        create connection and cusror objects.
+        '''
+        self.connection = None
+        if driver == 'sqlite3' :
+            from sqlite3 import connect
+            self.connection = connect(database)
+            self.connection.text_factory = str # fixes sqlite3.OperationalError: Could not decode to UTF-8
+            self.cursor = self.connection.cursor()
+        else :
+            raise ValueError, 'driver %s not supported yet.' % driver
+
+    def __del__(self) :
+        '''
+        Close database connection
+        '''
+        self.cursor.close()
+        self.connection.close()
+
+    def query(self, sql) :
+        '''
+        Execute SQL and fetch all results
+        '''
+        print sql
+        self.cursor.execute(sql)
+        return self.cursor.fetchall()
+        
+    
+    
+class Catalog :
+    '''
+    This class represents the Bacula catalog, and provides an interface
+    for generating a list of files for a given set of user supplied
+    query parameters.
+    '''
+    def __init__(self, database) :
+        '''
+        Catalog initialization: DATABASE is a Database driver
+        object.
+        '''
+        self.database = database
+
+        
+    def query(self, client, fileset = None, timespec = None, volume = None) :
+        '''
+        Query bacula database, get list of files that match
+        backup prior to given TIMESPEC, for a given CLIENT, FILESET
+        and VOLUME.
+
+        If the date/time is not specified (i.e. it's None) then use
+        the current date/time.
+
+        File records include file path, file name, stat info and
+        restore info.
+
+        Security note: query parameters are never taken from user supplied
+        input, but rather are verified against the catalog. This allows us to
+        use formatted strings for building parametrized queries.
+        '''
+        # validate client
+        self.clients = dict(self.database.query(SQL.clients))
+        if client not in self.clients :
+            raise ValueError, 'client must be one of %s' % self.clients.keys()
+        self.client_id = self.clients[client]
+        # validate fileset
+        self.filesets = [f[0] for f in self.database.query(SQL.filesets % (self.client_id, self.client_id))]
+        if len(self.filesets) == 1 and not fileset :
+            fileset = self.filesets[0]
+        elif fileset not in self.filesets :
+            raise ValueError, 'fileset must be one if %s' % self.filesets
+        self.fileset = self.database.query(SQL.fileset % fileset)[0]
+        # validate timespec
+        if timespec :
+            self.datetime = datetime.isoformat(datetime.strptime(timespec, '%Y-%m-%d %H:%M:%S'))
+        else :
+            self.datetime = str(datetime.now())
+        # create temporary tables
+        self.database.query(SQL.create_temp)
+        self.database.query(SQL.create_temp1)
+        # get list of jobs
+        self.database.query(SQL.full_jobs_temp1 %
+                            (self.client_id, self.client_id, self.datetime, self.fileset[1]))
+        self.database.query(SQL.full_jobs_temp)
+        full_jobs = self.database.query(SQL.temp1)
+        self.database.query(SQL.diff_jobs_temp % (full_jobs[0][1], self.datetime, self.client_id, self.fileset[1]))
+        diff_jobs = self.database.query(SQL.temp)
+        self.database.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]))
+        self.jobs = self.database.query(SQL.jobs)
+        jobs_csl = ','.join([str(job[0]) for job in self.jobs])
+        base_jobs = self.database.query(SQL.base_jobs % jobs_csl)
+        all_jobs_csl = ','.join([str(job[0]) for job in self.jobs + base_jobs])
+        # abort if any job in the list has been purged
+        purged = self.database.query(SQL.purged_jobs % all_jobs_csl)
+        if purged[0][0] > 0 :
+            raise ValueError, 'purged jobs in list (%s)' % all_jobs_csl
+        # get files
+        self.files = self.database.query(SQL.files % (SQL.with_basejobs % (jobs_csl, jobs_csl, jobs_csl, jobs_csl)))
+        # delete temporary tables
+        self.database.query(SQL.del_temp)
+        self.database.query(SQL.del_temp1)
+
+        return self.files
+
+class FileSystem :
+    def __init__(self, options, mount_point) :
+        '''
+        Initialize database and catalog.
+        '''
+        self.database = Database(options.driver,
+                                 options.database,
+                                 options.username,
+                                 options.password)
+        self.catalog = Catalog(self.database)
+        self.client = options.client
+        self.fileset = options.fileset
+        self.datetime = options.datetime
+    
+    def mount(self) :
+        pass
+
+    def umount(self) :
+        pass
+
+    def debug(self) :
+        '''
+        Debug entry point. Don't use.
+        '''
+        self.files = self.catalog.query(self.client, self.fileset, self.datetime)
+        print '%d files selected' % len(self.files)
+
+def main() :
+    '''
+    Expose the Bacula catalog as a read-only user-space file system.
+    File read operations are delegated to the bextract utility.
+    '''
+    usage = "Usage: %prog [options] mount|umount <mount-point>"
+    parser = OptionParser(usage=usage, version='%prog '+ __version__)
+    parser.add_option("-v", "--verbose",
+                      action="store_true", dest="verbose", default=False,
+                      help="Print debug messages")
+    parser.add_option("-d", "--driver",
+                      dest="driver", default='sqlite3', help="Database driver (default: sqlite3)")
+    parser.add_option("-P", "--port",
+                      dest="port", default='', help="Database port")
+    parser.add_option("-b", "--database",
+                      dest="database", default='/var/lib/bacula/bacula.db', help="Database name (default: /var/lib/bacula/bacula.db)")
+    parser.add_option("-u", "--username",
+                      dest="username", default='bacula', help="Database user name (default: bacula)")
+    parser.add_option("-p", "--password",
+                      dest="password", default='', help="Database password")
+    parser.add_option("-c", "--conf",
+                      dest="conf", default='/etc/bacula/bacula-sd.conf',
+                      help="Bacula storage daemon configuration file (default: /etc/bacula/bacula-sd.conf)")
+    parser.add_option("-C", "--client",
+                      dest="client", default='',
+                      help="Bacula file daemon name")
+    parser.add_option("-f", "--fileset",
+                      dest="fileset", default=None,
+                      help="Bacula fileset")
+    parser.add_option("-D", "--datetime",
+                      dest="datetime", default=None,
+                      help="Backup snapshot date/time")
+    (options, args) = parser.parse_args()
+
+    if len(args) == 2 :
+        action = args[0]
+        mount_point = args[1]
+        fs = FileSystem(options, mount_point)        
+        if action == 'mount' :
+            fs.mount()
+        elif action == 'umount' :
+            fs.umount()
+        elif action == 'debug' :
+            fs.debug()
+        else :
+            print 'Unknown action \"%s\"' % action
+    else :
+        print 'Error: wrong number of command line arguments (must be 2).'
+        parser.print_help()
+
+
+        
+if __name__ == '__main__':
+    sys.exit(main())
