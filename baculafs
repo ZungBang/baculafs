@@ -1,6 +1,9 @@
 #! /usr/bin/env python
 
 import sys
+import os
+import stat
+import errno
 from datetime import datetime
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
@@ -329,24 +332,10 @@ class Catalog :
 
         return self.files
 
+
 class FileSystem(Fuse) :
 
-    lstat_fields = ['st_dev',
-                    'st_ino',
-                    'st_mode',
-                    'st_nlink',
-                    'st_uid',
-                    'st_gid',
-                    'st_rdev',
-                    'st_size',
-                    'st_blksize',
-                    'st_blocks',
-                    'st_atime',
-                    'st_mtime',
-                    'st_ctime',
-                    'st_linkfi',
-                    'st_flags',
-                    'st_streamid']
+    null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2)
     
     def __init__(self, *args, **kw):
         '''
@@ -368,7 +357,66 @@ class FileSystem(Fuse) :
 
         Fuse.__init__(self, *args, **kw)
 
-    def mount(self) :
+
+    bacula_stat_fields = ['st_dev',
+                          'st_ino',
+                          'st_mode',
+                          'st_nlink',
+                          'st_uid',
+                          'st_gid',
+                          'st_rdev',
+                          'st_size',
+                          'st_blksize',
+                          'st_blocks',
+                          'st_atime',
+                          'st_mtime',
+                          'st_ctime',
+                          'st_linkfi',
+                          'st_flags',
+                          'st_streamid']
+    
+    fuse_stat_fields =   ['st_mode',
+                          'st_ino',
+                          'st_dev',
+                          'st_nlink',
+                          'st_uid',
+                          'st_gid',
+                          'st_size',
+                          'st_atime',
+                          'st_mtime',
+                          'st_ctime']
+                        
+    
+    def bacula_stat(self, base64) :
+        '''
+        Parse base64 encoded lstat info.
+        Returns fuse.Stat object with subset of decoded values,
+        and dictionary with full list of decoded values
+        '''
+        st = fuse.Stat()
+        lst = dict(zip(FileSystem.bacula_stat_fields, map(self.base64.decode, base64.split())))
+        for k in FileSystem.fuse_stat_fields :
+            if k in FileSystem.bacula_stat_fields :
+                setattr(st, k, lst[k])
+                #print k, lst[k], getattr(st, k)
+        return lst, st
+
+    def add_parent_dirs(self, path) :
+        '''
+        add parent directories of path to dirs dictionary
+        '''
+        head, tail = os.path.split(path)
+        if not head or head == path:
+            return
+        head_dir = head if head.endswith('/') else head+'/'
+        if not head_dir in self.dirs :
+            self.dirs[head_dir] = { tail: (FileSystem.null_stat,) }
+        elif not tail in self.dirs[head_dir] :
+            self.dirs[head_dir][tail] = (FileSystem.null_stat,)
+        self.add_parent_dirs(head) 
+
+    
+    def fsinit(self):
         '''
         Initialize database, catalog
         '''
@@ -379,18 +427,51 @@ class FileSystem(Fuse) :
                            self.trace)
         self.catalog = Catalog(self.db)
         self.base64 = Base64()
-        self.files = self.catalog.query(self.client, self.fileset, self.datetime)
-        print '%d files selected' % len(self.files)
-        # for file in self.files :
-        #     print file[0]+file[1], self.lstat(file[-2])
+        files = self.catalog.query(self.client, self.fileset, self.datetime)
+        self.dirs = { '/': { '': (FileSystem.null_stat,) } }
+        # FIXME: windows filesets show no entries (need to add / before C:)
+        for file in files :
+            entry = file[2:] + self.bacula_stat(file[-2])
+            head = file[0]
+            tail = file[1]
+            if tail == '' :
+                head, tail = os.path.split(file[0][:-1])
+                head = head if head.endswith('/') else head+'/'
+            if not head.startswith('/') :
+                head = '/'+head
+            if head in self.dirs :
+                self.dirs[head][tail] = entry
+            else :
+                self.dirs[head] = {tail: entry}
+            self.add_parent_dirs(head)
+        #print self.dirs
+        print '%d files found.' % len(files)
+
+    def getattr(self, path):
+        print 'getattr', path
+        head, tail = os.path.split(path)
+        #print head, tail
+        head = head if head.endswith('/') else head+'/'
+        if head in self.dirs and tail in self.dirs[head] :
+            #print '%o' % self.dirs[head][tail][-1].st_mode
+            return self.dirs[head][tail][-1]
+        else:
+            return -errno.ENOENT
+    
+    def readdir(self, path, offset):
+        path = path if path.endswith('/') else path+'/'
+        print 'readdir', path, offset
+        for key in ['.','..']+self.dirs[path].keys() :
+            if len(key) > 0:
+                #print 'key=',key
+                yield fuse.Direntry(key)
+            
+    def open(self, path, flags):
+        return -errno.ENOENT
         
-    def lstat(self, base64) :
-        '''
-        Parse base64 encoded lstat info.
-        Returns dictionary with decoded values.
-        '''
-        return dict(zip(FileSystem.lstat_fields, map(self.base64.decode, base64.split())))
-        
+    def read(self, path, size, offset):
+        return -errno.ENOENT
+                                                                                                
 
 def main():
 
@@ -403,16 +484,15 @@ baculafs: expose the Bacula catalog as a userspace filesystem
                         usage=usage,
                         dash_s_do='setsingle')
 
-    # Disable multithreading: if you want to use it, protect all method of
-    # XmlFile class with locks, in order to prevent race conditions
+    # disable multithreading (if you want to use it, you should
+    # protect all filesystem access with locks, in order to prevent race
+    # conditions)
     server.multithreaded = False
 
-    # server.parser.add_option(mountopt="root", metavar="PATH", default='/',
-    #                          help="mirror filesystem from under PATH [default: %default]")
     server.parser.add_option(mountopt="driver", metavar="DRIVER", default=server.driver,
                              help="database driver [default: %default]")
     server.parser.add_option(mountopt="address", metavar="SERVER", default=server.address,
-                             help="database server address")
+                             help="database server address [default: %default]")
     server.parser.add_option(mountopt="port", metavar="PORT", default=server.port,
                              help="database server port")
     server.parser.add_option(mountopt="database", metavar="PATH", default=server.database,
@@ -430,15 +510,8 @@ baculafs: expose the Bacula catalog as a userspace filesystem
     server.parser.add_option(mountopt="datetime", metavar="'YYYY-MM-DD hh:mm:ss'", default=server.datetime,
                              help="snapshot date/time [default: now]")
     server.parser.add_option(mountopt="trace", default=server.trace, action="store_true",
-                             help="trace SQL queries and other stuff")
+                             help="trace SQL queries and other stuff [default=%default]")
     server.parse(values=server, errex=1)
-
-    try:
-        if server.fuse_args.mount_expected():
-            server.mount()
-    except OSError:
-        print >> sys.stderr, "can't enter root of underlying filesystem"
-        sys.exit(1)
 
     server.main()
 
