@@ -1,5 +1,6 @@
 #! /usr/bin/env python
 
+import traceback
 import sys
 import os
 import stat
@@ -11,6 +12,7 @@ try:
     import _find_fuse_parts
 except ImportError:
     pass
+
 import fuse
 from fuse import Fuse
 
@@ -228,6 +230,9 @@ class Database :
         self.cursor = None
         if driver == 'sqlite3' :
             from sqlite3 import connect
+            database = os.path.expanduser(database)
+            if not os.path.isfile(database) or not os.access(database, os.R_OK) :
+                raise RuntimeError, 'cannot read from file %s' % database
             self.connection = connect(database)
             self.connection.text_factory = str # fixes sqlite3.OperationalError: Could not decode to UTF-8
             self.cursor = self.connection.cursor()
@@ -294,7 +299,7 @@ class Catalog :
         if len(self.filesets) == 1 and not fileset :
             fileset = self.filesets[0]
         elif len(self.filesets) == 0 :
-            raise ValueError, 'no filesets found for %s' % client
+            raise RuntimeError, 'no filesets found for %s' % client
         elif fileset not in self.filesets :
             raise ValueError, 'fileset must be one of %s' % self.filesets
         self.fileset = self.db.query(SQL.fileset % fileset)[0]
@@ -312,7 +317,7 @@ class Catalog :
         self.db.query(SQL.full_jobs_temp)
         full_jobs = self.db.query(SQL.temp1)
         if len(full_jobs) == 0 :
-            raise ValueError, 'no full jobs found'
+            raise RuntimeError, 'no full jobs found'
         self.db.query(SQL.diff_jobs_temp % (full_jobs[0][1], self.datetime, self.client_id, self.fileset[1]))
         diff_jobs = self.db.query(SQL.temp)
         self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]))
@@ -323,7 +328,7 @@ class Catalog :
         # abort if any job in the list has been purged
         purged = self.db.query(SQL.purged_jobs % all_jobs_csl)
         if purged[0][0] > 0 :
-            raise ValueError, 'purged jobs in list (%s)' % all_jobs_csl
+            raise RuntimeError, 'purged jobs in list (%s)' % all_jobs_csl
         # get files
         self.files = self.db.query(SQL.files % (SQL.with_basejobs % (jobs_csl, jobs_csl, jobs_csl, jobs_csl)))
         # delete temporary tables
@@ -353,7 +358,10 @@ class FileSystem(Fuse) :
         self.client = ''
         self.fileset = None
         self.datetime = None
-        self.trace = True
+        self.notify = False
+        self.pynotify = None
+        self.notification = None
+        self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
         Fuse.__init__(self, *args, **kw)
 
@@ -387,7 +395,7 @@ class FileSystem(Fuse) :
                           'st_ctime']
                         
     
-    def bacula_stat(self, base64) :
+    def _bacula_stat(self, base64) :
         '''
         Parse base64 encoded lstat info.
         Returns fuse.Stat object with subset of decoded values,
@@ -398,14 +406,40 @@ class FileSystem(Fuse) :
         for k in FileSystem.fuse_stat_fields :
             if k in FileSystem.bacula_stat_fields :
                 setattr(st, k, lst[k])
-                #print k, lst[k], getattr(st, k)
         return lst, st
 
-    def add_parent_dirs(self, path) :
+    def _notify(self, message, timeout = -1) :
+        '''
+        Notify message to user
+        '''
+        if not self.notify :
+            print message
+            return
+
+        if not self.notification :
+            try :
+                import pygtk
+                pygtk.require('2.0')
+                import pynotify
+                self.pynotify = pynotify
+            except :
+                self.notify = False
+                print message
+                return
+            self.pynotify.init("BaculaFS")
+            self.notification = self.pynotify.Notification("BaculaFS", message)
+        else :
+            self.notification.update("BaculaFS", message)
+        self.notification.set_timeout(timeout if timeout >= 0 else self.pynotify.EXPIRES_DEFAULT)
+        if not self.notification.show() :
+            self.notify = False
+            self.notification = None
+
+    def _add_parent_dirs(self, path) :
         '''
         add parent directories of path to dirs dictionary
         '''
-        head, tail = os.path.split(path)
+        head, tail = os.path.split(path[:-1])
         if not head or head == path:
             return
         head_dir = head if head.endswith('/') else head+'/'
@@ -413,57 +447,70 @@ class FileSystem(Fuse) :
             self.dirs[head_dir] = { tail: (FileSystem.null_stat,) }
         elif not tail in self.dirs[head_dir] :
             self.dirs[head_dir][tail] = (FileSystem.null_stat,)
-        self.add_parent_dirs(head) 
+        self._add_parent_dirs(head_dir)
 
     
     def fsinit(self):
         '''
         Initialize database, catalog
         '''
+        self._notify("Populating file system ... ", 0)
+
         self.db = Database(self.driver,
                            self.database,
                            self.username,
                            self.password,
-                           self.trace)
+                           True)
         self.catalog = Catalog(self.db)
         self.base64 = Base64()
         files = self.catalog.query(self.client, self.fileset, self.datetime)
-        self.dirs = { '/': { '': (FileSystem.null_stat,) } }
-        # FIXME: windows filesets show no entries (need to add / before C:)
+        self.db = None 
+        self.catalog = None
+
         for file in files :
-            entry = file[2:] + self.bacula_stat(file[-2])
+            # make file entry
+            entry = file[2:] + (None,) # stat info placeholder
             head = file[0]
             tail = file[1]
-            if tail == '' :
-                head, tail = os.path.split(file[0][:-1])
-                head = head if head.endswith('/') else head+'/'
+            # handle windows directories
             if not head.startswith('/') :
                 head = '/'+head
-            if head in self.dirs :
-                self.dirs[head][tail] = entry
-            else :
-                self.dirs[head] = {tail: entry}
-            self.add_parent_dirs(head)
-        #print self.dirs
-        print '%d files found.' % len(files)
+            # new directory
+            if head not in self.dirs :
+                self.dirs[head] = {}
+            # add parent directories
+            self._add_parent_dirs(head)
+            # directories are added to their parents
+            if tail == '' :
+                head, tail = os.path.split(head[:-1])
+                if not head.endswith('/') :
+                    head += '/'
+            # and finally
+            self.dirs[head][tail] = entry
+
+        # for dir in self.dirs :
+        #     print dir, self.dirs[dir]
+            
+        self._notify("Ready (%d files)." % len(files))
 
     def getattr(self, path):
-        print 'getattr', path
         head, tail = os.path.split(path)
         #print head, tail
         head = head if head.endswith('/') else head+'/'
         if head in self.dirs and tail in self.dirs[head] :
-            #print '%o' % self.dirs[head][tail][-1].st_mode
-            return self.dirs[head][tail][-1]
+            attrs = self.dirs[head][tail][-1]
+            # decode and memoize stat info
+            if not attrs :
+                self.dirs[head][tail] = self.dirs[head][tail][:-1] + self._bacula_stat(self.dirs[head][tail][-3])
+                attrs = self.dirs[head][tail][-1]
+            return attrs
         else:
             return -errno.ENOENT
     
     def readdir(self, path, offset):
         path = path if path.endswith('/') else path+'/'
-        print 'readdir', path, offset
         for key in ['.','..']+self.dirs[path].keys() :
             if len(key) > 0:
-                #print 'key=',key
                 yield fuse.Direntry(key)
             
     def open(self, path, flags):
@@ -484,9 +531,6 @@ baculafs: expose the Bacula catalog as a userspace filesystem
                         usage=usage,
                         dash_s_do='setsingle')
 
-    # disable multithreading (if you want to use it, you should
-    # protect all filesystem access with locks, in order to prevent race
-    # conditions)
     server.multithreaded = False
 
     server.parser.add_option(mountopt="driver", metavar="DRIVER", default=server.driver,
@@ -509,8 +553,9 @@ baculafs: expose the Bacula catalog as a userspace filesystem
                              help="fileset")
     server.parser.add_option(mountopt="datetime", metavar="'YYYY-MM-DD hh:mm:ss'", default=server.datetime,
                              help="snapshot date/time [default: now]")
-    server.parser.add_option(mountopt="trace", default=server.trace, action="store_true",
-                             help="trace SQL queries and other stuff [default=%default]")
+    server.parser.add_option(mountopt="notify", action="store_true", default=server.notify,
+                             help="enable notifications [default: %default]")
+
     server.parse(values=server, errex=1)
 
     server.main()
