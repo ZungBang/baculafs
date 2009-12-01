@@ -181,6 +181,9 @@ class SQL :
     '''
 
 class Base64 :
+    '''
+    Bacula specific implementation of a base64 decoder
+    '''
     digits = [
         'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
         'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
@@ -197,9 +200,7 @@ class Base64 :
     
     def decode(self, base64) :
         '''
-        Convert the Base 64 characters in what to
-        a value.
-        Returns the value
+        Convert the Base 64 characters in base64 to a value.
         '''
         value = 0
         first = 0
@@ -341,7 +342,26 @@ class Catalog :
 class FileSystem(Fuse) :
 
     null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2)
-    
+
+    bacula_stat_fields = ['st_dev',
+                          'st_ino',
+                          'st_mode',
+                          'st_nlink',
+                          'st_uid',
+                          'st_gid',
+                          'st_rdev',
+                          'st_size',
+                          'st_blksize',
+                          'st_blocks',
+                          'st_atime',
+                          'st_mtime',
+                          'st_ctime',
+                          'st_linkfi',
+                          'st_flags',
+                          'st_streamid']
+
+    fuse_stat_fields = dir(fuse.Stat())
+
     def __init__(self, *args, **kw):
         '''
         Initialize filesystem
@@ -363,28 +383,15 @@ class FileSystem(Fuse) :
         self.notification = None
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
+        class File (FileSystem._File):
+            def __init__(self2, *a, **kw):
+                FileSystem._File.__init__(self2, self, *a, **kw)
+                
+        self.file_class = File
+        
         Fuse.__init__(self, *args, **kw)
 
 
-    bacula_stat_fields = ['st_dev',
-                          'st_ino',
-                          'st_mode',
-                          'st_nlink',
-                          'st_uid',
-                          'st_gid',
-                          'st_rdev',
-                          'st_size',
-                          'st_blksize',
-                          'st_blocks',
-                          'st_atime',
-                          'st_mtime',
-                          'st_ctime',
-                          'st_linkfi',
-                          'st_flags',
-                          'st_streamid']
-    
-    fuse_stat_fields = dir(fuse.Stat())
-    
     def _bacula_stat(self, base64) :
         '''
         Parse base64 encoded lstat info.
@@ -517,14 +524,17 @@ class FileSystem(Fuse) :
     def readlink(self, path):
         return -errno.ENOENT
 
-    def open(self, path, flags):
-        accmode = os.O_RDONLY | os.O_WRONLY | os.O_RDWR
-        if (flags & accmode) != os.O_RDONLY:
-            return -errno.EACCES
-        return -errno.ENOENT
-        
-    def read(self, path, size, offset):
-        return -errno.ENOENT
+    class _File(object) :
+        def __init__(self, fs, path, flags, mode = None) :
+            self.fs = fs
+            accmode = os.O_RDONLY | os.O_WRONLY | os.O_RDWR
+            if (flags & accmode) != os.O_RDONLY:
+                raise IOError(errno.EACCES, '')
+            raise IOError(errno.ENOENT, '')
+
+        def read(self, size, offset):
+            raise IOError(errno.ENOENT, '')
+
                                                                                                 
 
 def main():
