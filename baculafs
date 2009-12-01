@@ -383,17 +383,7 @@ class FileSystem(Fuse) :
                           'st_flags',
                           'st_streamid']
     
-    fuse_stat_fields =   ['st_mode',
-                          'st_ino',
-                          'st_dev',
-                          'st_nlink',
-                          'st_uid',
-                          'st_gid',
-                          'st_size',
-                          'st_atime',
-                          'st_mtime',
-                          'st_ctime']
-                        
+    fuse_stat_fields = dir(fuse.Stat())
     
     def _bacula_stat(self, base64) :
         '''
@@ -403,8 +393,8 @@ class FileSystem(Fuse) :
         '''
         st = fuse.Stat()
         lst = dict(zip(FileSystem.bacula_stat_fields, map(self.base64.decode, base64.split())))
-        for k in FileSystem.fuse_stat_fields :
-            if k in FileSystem.bacula_stat_fields :
+        for k in FileSystem.bacula_stat_fields :
+            if k in FileSystem.fuse_stat_fields :
                 setattr(st, k, lst[k])
         return lst, st
 
@@ -494,12 +484,23 @@ class FileSystem(Fuse) :
         self._notify("Ready (%d files)." % len(files))
 
     def getattr(self, path):
+        '''
+        Retrieve file attributes.
+        Notes:
+        1) Bacula does not store attributes for parent directories
+           that are not being explicitly backed up, so we provide
+           a default set of attributes FileSystem.null_stat
+        2) file attributes are base64-encoded and stored by Bacula
+           in the catalog. These attributes are decoded when first
+           needed and then cached for subsequent requests.
+        3) python fuse expects atime/ctime/mtime to be positive
+        '''
         head, tail = os.path.split(path)
         #print head, tail
         head = head if head.endswith('/') else head+'/'
         if head in self.dirs and tail in self.dirs[head] :
             attrs = self.dirs[head][tail][-1]
-            # decode and memoize stat info
+            # decode and cache stat info
             if not attrs :
                 self.dirs[head][tail] = self.dirs[head][tail][:-1] + self._bacula_stat(self.dirs[head][tail][-3])
                 attrs = self.dirs[head][tail][-1]
@@ -513,7 +514,13 @@ class FileSystem(Fuse) :
             if len(key) > 0:
                 yield fuse.Direntry(key)
             
+    def readlink(self, path):
+        return -errno.ENOENT
+
     def open(self, path, flags):
+        accmode = os.O_RDONLY | os.O_WRONLY | os.O_RDWR
+        if (flags & accmode) != os.O_RDONLY:
+            return -errno.EACCES
         return -errno.ENOENT
         
     def read(self, path, size, offset):
@@ -527,9 +534,7 @@ baculafs: expose the Bacula catalog as a userspace filesystem
 
 """ + Fuse.fusage
 
-    server = FileSystem(version="%prog " + fuse.__version__,
-                        usage=usage,
-                        dash_s_do='setsingle')
+    server = FileSystem(version="%prog " + fuse.__version__, usage=usage)
 
     server.multithreaded = False
 
