@@ -24,7 +24,7 @@ fuse.fuse_python_api = (0, 2)
 
 fuse.feature_assert('stateful_files', 'has_init')
 
-__version__ = '0.01'
+__version__ = '0.0.1'
 
 class SQL :
     '''
@@ -540,11 +540,11 @@ class FileSystem(Fuse) :
 def main():
 
     usage = """
-baculafs: expose the Bacula catalog as a userspace filesystem
+BaculaFS: expose the Bacula catalog as a user-space file system
 
 """ + Fuse.fusage
 
-    server = FileSystem(version="%prog " + fuse.__version__, usage=usage)
+    server = FileSystem(version="BaculaFS version: %s\nPython FUSE version: %s" % (__version__, fuse.__version__), usage=usage)
 
     server.multithreaded = False
 
