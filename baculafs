@@ -5,6 +5,8 @@ import sys
 import os
 import stat
 import errno
+import tempfile
+import subprocess
 from datetime import datetime
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
@@ -26,9 +28,37 @@ fuse.feature_assert('stateful_files', 'has_init')
 
 __version__ = '0.0.1'
 
+
+def flag2mode(flags):
+    '''
+    taken from python-fuse xmp.py example
+    '''
+    md = {os.O_RDONLY: 'r', os.O_WRONLY: 'w', os.O_RDWR: 'w+'}
+    m = md[flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR)]
+    
+    if flags | os.O_APPEND:
+        m = m.replace('w', 'a', 1)
+        
+    return m
+
+def makedirs(path):
+    '''
+    create path like mkdir -p
+    taken from: http://stackoverflow.com/questions/600268/mkdir-p-functionality-in-python/600612#600612
+    '''
+    try:
+        os.makedirs(path)
+    except OSError, exc:
+        if exc.errno == errno.EEXIST:
+            pass
+        else:
+            raise
+                            
+
 class SQL :
     '''
-    Holds all SQL statements used by baculafs
+    Holds all SQL statements used by baculafs.
+    Adapted from Bacula source code.
     '''
 
     clients = 'SELECT Client.Name,ClientId FROM Client'
@@ -180,6 +210,22 @@ class SQL :
       AND T1.FilenameId = File.FilenameId
     '''
 
+    job_records = '''
+    SELECT JobId,VolSessionId,VolSessionTime,
+    PoolId,StartTime,EndTime,JobFiles,JobBytes,JobTDate,Job,JobStatus,
+    Type,Level,ClientId,Name,PriorJobId,RealEndTime,FileSetId,
+    SchedTime,RealEndTime,ReadBytes,HasBase 
+    FROM Job WHERE JobId IN (%s)
+    '''
+
+    volumes = '''
+    SELECT JobMedia.JobId,VolumeName,MediaType,FirstIndex,LastIndex,StartFile,
+    JobMedia.EndFile,StartBlock,JobMedia.EndBlock,Copy,
+    Slot,StorageId,InChanger
+     FROM JobMedia,Media WHERE JobMedia.JobId IN (%s)
+     AND JobMedia.MediaId=Media.MediaId ORDER BY JobMedia.JobId,VolIndex,JobMediaId
+    '''
+    
 class Base64 :
     '''
     Bacula specific implementation of a base64 decoder
@@ -322,14 +368,20 @@ class Catalog :
         self.db.query(SQL.diff_jobs_temp % (full_jobs[0][1], self.datetime, self.client_id, self.fileset[1]))
         diff_jobs = self.db.query(SQL.temp)
         self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]))
-        self.jobs = self.db.query(SQL.jobs)
-        jobs_csl = ','.join([str(job[0]) for job in self.jobs])
+        jobs = self.db.query(SQL.jobs)
+        jobs_csl = ','.join([str(job[0]) for job in jobs])
         base_jobs = self.db.query(SQL.base_jobs % jobs_csl)
-        all_jobs_csl = ','.join([str(job[0]) for job in self.jobs + base_jobs])
+        all_jobs = jobs + base_jobs
+        all_jobs_csl = ','.join([str(job[0]) for job in all_jobs])
         # abort if any job in the list has been purged
         purged = self.db.query(SQL.purged_jobs % all_jobs_csl)
         if purged[0][0] > 0 :
             raise RuntimeError, 'purged jobs in list (%s)' % all_jobs_csl
+        # get job records
+        self.jobs = self.db.query(SQL.job_records % all_jobs_csl)
+        # get relevant volume records
+        self.volumes = self.db.query(SQL.volumes % all_jobs_csl)
+        print self.volumes
         # get files
         self.files = self.db.query(SQL.files % (SQL.with_basejobs % (jobs_csl, jobs_csl, jobs_csl, jobs_csl)))
         # delete temporary tables
@@ -368,6 +420,7 @@ class FileSystem(Fuse) :
         '''
 
         # default option values
+        self.verbose = False
         self.driver = 'sqlite3'
         self.database = '/var/lib/bacula/bacula.db'
         self.address = 'localhost'
@@ -378,6 +431,7 @@ class FileSystem(Fuse) :
         self.client = ''
         self.fileset = None
         self.datetime = None
+        self.move_root = False
         self.notify = False
         self.pynotify = None
         self.notification = None
@@ -388,7 +442,7 @@ class FileSystem(Fuse) :
                 FileSystem._File.__init__(self2, self, *a, **kw)
                 
         self.file_class = File
-        
+
         Fuse.__init__(self, *args, **kw)
 
 
@@ -411,6 +465,7 @@ class FileSystem(Fuse) :
         '''
         if not self.notify :
             print message
+            sys.stdout.flush()
             return
 
         if not self.notification :
@@ -452,17 +507,21 @@ class FileSystem(Fuse) :
         Initialize database, catalog
         '''
         self._notify("Populating file system ... ", 0)
-
+        self.cache_prefix = tempfile.mkdtemp(prefix='baculafs-')
+        self.cache_path = os.path.normpath(self.cache_prefix + '/files')
+        makedirs(self.cache_path)
+        self.cache_bsrpath = os.path.normpath(self.cache_prefix + '/bsr')
+        makedirs(self.cache_bsrpath)
         self.db = Database(self.driver,
                            self.database,
                            self.username,
                            self.password,
-                           True)
+                           self.verbose)
         self.catalog = Catalog(self.db)
         self.base64 = Base64()
         files = self.catalog.query(self.client, self.fileset, self.datetime)
+        # we don't need the database anymore
         self.db = None 
-        self.catalog = None
 
         for file in files :
             # make file entry
@@ -485,11 +544,62 @@ class FileSystem(Fuse) :
             # and finally
             self.dirs[head][tail] = entry
 
-        # for dir in self.dirs :
-        #     print dir, self.dirs[dir]
-            
         self._notify("Ready (%d files)." % len(files))
 
+    def _extract(self, path) :
+        '''
+        extract path from storage, return path of extracted file
+        '''
+        realpath = os.path.normpath(self.cache_path + path)
+        print path
+        print realpath
+        # return if file has already been extracted
+        if os.path.exists(realpath) or os.path.lexists(realpath) :
+            print 'FILE IN CACHE'
+            return realpath
+        head, tail = os.path.split(path)
+        # sanity check: path should not be a directory
+        if head == tail or tail == '':
+            raise RuntimeError, 'trying to extract a directory %s' % path
+        # check that path exists in catalog
+        if not head.endswith('/') :
+            head = head + '/'
+        if head not in self.dirs or tail not in self.dirs[head] :
+            return None
+        # sanity check: path entry is incomplete
+        if len(self.dirs[head][tail]) == 1 :
+            raise RuntimeError, 'incomplete entry for path %s' % path
+        # construct bootstrap file for path
+        fileindex, jobid = self.dirs[head][tail][0:2]
+        jobs = [job for job in self.catalog.jobs
+                if job[0] == jobid]
+        volumes = [volume for volume in self.catalog.volumes
+                   if (volume[0] == jobid and 
+                       volume[3] <= fileindex and
+                       fileindex <= volume[4])]
+        print self.dirs[head][tail]
+        bsrfd, bsrpath = tempfile.mkstemp(suffix='.bsr', dir=self.cache_bsrpath, text=True)
+        print bsrpath
+        device = 'FileStorage' # FIXME: retrieve
+        for volume in volumes :
+            os.write(bsrfd, 'Volume="%s"\n' % volume[1])
+            os.write(bsrfd, 'MediaType="%s"\n' % volume[2])
+            os.write(bsrfd, 'Device="%s"\n' % device) 
+            os.write(bsrfd, 'VolSessionId=%d\n' % jobs[0][1])
+            os.write(bsrfd, 'VolSessionTime=%d\n' % jobs[0][2])
+            StartAddr = (volume[5] << 32) | volume[7]
+            EndAddr = (volume[6] << 32) | volume[8]
+            os.write(bsrfd, 'VolAddr=%d-%d\n' % (StartAddr,EndAddr))
+            os.write(bsrfd, 'FileIndex=%d\n' % fileindex)
+            os.write(bsrfd, 'Count=1\n')
+        os.close(bsrfd)
+        cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, device, self.cache_path)
+        print cmd
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        output = process.communicate()
+        print output[0], output[1]
+        return realpath
+        
     def getattr(self, path):
         '''
         Retrieve file attributes.
@@ -503,7 +613,6 @@ class FileSystem(Fuse) :
         3) python fuse expects atime/ctime/mtime to be positive
         '''
         head, tail = os.path.split(path)
-        #print head, tail
         head = head if head.endswith('/') else head+'/'
         if head in self.dirs and tail in self.dirs[head] :
             attrs = self.dirs[head][tail][-1]
@@ -522,19 +631,33 @@ class FileSystem(Fuse) :
                 yield fuse.Direntry(key)
             
     def readlink(self, path):
+        realpath = self._extract(path)
+        if realpath :
+            link = os.readlink(realpath)
+            if self.move_root and link.startswith('/') :
+                link = os.path.normpath(self.fuse_args.mountpoint + link)
+            return link
         return -errno.ENOENT
 
     class _File(object) :
-        def __init__(self, fs, path, flags, mode = None) :
+        def __init__(self, fs, path, flags, *mode) :
             self.fs = fs
             accmode = os.O_RDONLY | os.O_WRONLY | os.O_RDWR
             if (flags & accmode) != os.O_RDONLY:
                 raise IOError(errno.EACCES, '')
-            raise IOError(errno.ENOENT, '')
+            self.path = path
+            self.realpath = fs._extract(path)
+            self.file = os.fdopen(os.open(self.realpath, flags, *mode), flag2mode(flags))
+            self.fd = self.file.fileno()
+            self.direct_io = False
+            self.keep_cache = True
 
-        def read(self, size, offset):
-            raise IOError(errno.ENOENT, '')
+        def read(self, length, offset):
+            self.file.seek(offset)
+            return self.file.read(length)
 
+        def release(self, flags):
+            self.file.close()
                                                                                                 
 
 def main():
@@ -568,8 +691,12 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="fileset")
     server.parser.add_option(mountopt="datetime", metavar="'YYYY-MM-DD hh:mm:ss'", default=server.datetime,
                              help="snapshot date/time [default: now]")
+    server.parser.add_option(mountopt="move_root", action="store_true", default=server.move_root,
+                             help="make absolute path symlinks point to path under mount point  [default: %default]")
     server.parser.add_option(mountopt="notify", action="store_true", default=server.notify,
                              help="enable notifications [default: %default]")
+    server.parser.add_option(mountopt="verbose", action="store_true", default=server.verbose,
+                             help="be verbose [default: %default]")
 
     server.parse(values=server, errex=1)
 
