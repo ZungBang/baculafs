@@ -329,8 +329,7 @@ class Catalog :
         If the date/time is not specified (i.e. it's None) then use
         the current date/time.
 
-        File records include file path, file name, stat info and
-        restore info.
+        File records include file path, file name, and stat info.
 
         Security note: query parameters are never taken from user supplied
         input, but rather are verified against the catalog. This allows us to
@@ -360,7 +359,7 @@ class Catalog :
         self.db.query(SQL.create_temp1)
         # get list of jobs
         self.db.query(SQL.full_jobs_temp1 %
-                            (self.client_id, self.client_id, self.datetime, self.fileset[1]))
+                      (self.client_id, self.client_id, self.datetime, self.fileset[1]))
         self.db.query(SQL.full_jobs_temp)
         full_jobs = self.db.query(SQL.temp1)
         if len(full_jobs) == 0 :
@@ -381,7 +380,6 @@ class Catalog :
         self.jobs = self.db.query(SQL.job_records % all_jobs_csl)
         # get relevant volume records
         self.volumes = self.db.query(SQL.volumes % all_jobs_csl)
-        print self.volumes
         # get files
         self.files = self.db.query(SQL.files % (SQL.with_basejobs % (jobs_csl, jobs_csl, jobs_csl, jobs_csl)))
         # delete temporary tables
@@ -430,6 +428,8 @@ class FileSystem(Fuse) :
         self.conf = '/etc/bacula/bacula-sd.conf'
         self.client = ''
         self.fileset = None
+        self.device = 'FileStorage'
+
         self.datetime = None
         self.move_root = False
         self.notify = False
@@ -580,11 +580,10 @@ class FileSystem(Fuse) :
         print self.dirs[head][tail]
         bsrfd, bsrpath = tempfile.mkstemp(suffix='.bsr', dir=self.cache_bsrpath, text=True)
         print bsrpath
-        device = 'FileStorage' # FIXME: retrieve
         for volume in volumes :
             os.write(bsrfd, 'Volume="%s"\n' % volume[1])
             os.write(bsrfd, 'MediaType="%s"\n' % volume[2])
-            os.write(bsrfd, 'Device="%s"\n' % device) 
+            os.write(bsrfd, 'Device="%s"\n' % self.device) 
             os.write(bsrfd, 'VolSessionId=%d\n' % jobs[0][1])
             os.write(bsrfd, 'VolSessionTime=%d\n' % jobs[0][2])
             StartAddr = (volume[5] << 32) | volume[7]
@@ -593,11 +592,14 @@ class FileSystem(Fuse) :
             os.write(bsrfd, 'FileIndex=%d\n' % fileindex)
             os.write(bsrfd, 'Count=1\n')
         os.close(bsrfd)
-        cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, device, self.cache_path)
+
+        # extract the file
+        cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
         print cmd
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         output = process.communicate()
         print output[0], output[1]
+
         return realpath
         
     def getattr(self, path):
@@ -689,6 +691,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="file daemon name")
     server.parser.add_option(mountopt="fileset", metavar="FILESET", default=server.fileset,
                              help="fileset")
+    server.parser.add_option(mountopt="device", metavar="DEVICE", default=server.device,
+                             help="storage device name [default: %default]")
     server.parser.add_option(mountopt="datetime", metavar="'YYYY-MM-DD hh:mm:ss'", default=server.datetime,
                              help="snapshot date/time [default: now]")
     server.parser.add_option(mountopt="move_root", action="store_true", default=server.move_root,
