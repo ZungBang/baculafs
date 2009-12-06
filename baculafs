@@ -6,8 +6,9 @@ import os
 import stat
 import errno
 import tempfile
-import subprocess
-from datetime import datetime
+import pexpect
+import time
+from datetime import datetime, timedelta
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
 try:
@@ -429,7 +430,7 @@ class FileSystem(Fuse) :
         self.client = ''
         self.fileset = None
         self.device = 'FileStorage'
-
+        self.retry_interval = 5*60
         self.datetime = None
         self.move_root = False
         self.notify = False
@@ -459,7 +460,7 @@ class FileSystem(Fuse) :
                 setattr(st, k, lst[k])
         return lst, st
 
-    def _notify(self, message, timeout = -1) :
+    def _notify(self, message, timeout = -1, urgent = False) :
         '''
         Notify message to user
         '''
@@ -482,7 +483,10 @@ class FileSystem(Fuse) :
             self.notification = self.pynotify.Notification("BaculaFS", message)
         else :
             self.notification.update("BaculaFS", message)
+
         self.notification.set_timeout(timeout if timeout >= 0 else self.pynotify.EXPIRES_DEFAULT)
+        self.notification.set_urgency(self.pynotify.URGENCY_CRITICAL if urgent else self.pynotify.URGENCY_NORMAL)
+            
         if not self.notification.show() :
             self.notify = False
             self.notification = None
@@ -512,6 +516,7 @@ class FileSystem(Fuse) :
         makedirs(self.cache_path)
         self.cache_bsrpath = os.path.normpath(self.cache_prefix + '/bsr')
         makedirs(self.cache_bsrpath)
+        self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
         self.db = Database(self.driver,
                            self.database,
                            self.username,
@@ -551,11 +556,13 @@ class FileSystem(Fuse) :
         extract path from storage, return path of extracted file
         '''
         realpath = os.path.normpath(self.cache_path + path)
-        print path
-        print realpath
+        if self.verbose :
+            print path
+            print realpath
         # return if file has already been extracted
         if os.path.exists(realpath) or os.path.lexists(realpath) :
-            print 'FILE IN CACHE'
+            if self.verbose :
+                print 'FILE IN CACHE'
             return realpath
         head, tail = os.path.split(path)
         # sanity check: path should not be a directory
@@ -577,9 +584,7 @@ class FileSystem(Fuse) :
                    if (volume[0] == jobid and 
                        volume[3] <= fileindex and
                        fileindex <= volume[4])]
-        print self.dirs[head][tail]
         bsrfd, bsrpath = tempfile.mkstemp(suffix='.bsr', dir=self.cache_bsrpath, text=True)
-        print bsrpath
         for volume in volumes :
             os.write(bsrfd, 'Volume="%s"\n' % volume[1])
             os.write(bsrfd, 'MediaType="%s"\n' % volume[2])
@@ -592,14 +597,37 @@ class FileSystem(Fuse) :
             os.write(bsrfd, 'FileIndex=%d\n' % fileindex)
             os.write(bsrfd, 'Count=1\n')
         os.close(bsrfd)
-
+        
         # extract the file
         cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
-        print cmd
-        process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-        output = process.communicate()
-        print output[0], output[1]
-
+        if self.verbose :
+            print cmd
+        child = pexpect.spawn(cmd)
+        if self.verbose :
+            child.logfile = sys.stdout
+        attempt = 0
+        while True :
+            i = child.expect([self.fail_pattern, pexpect.EOF],
+                             timeout=None,
+                             searchwindowsize=200)
+            if i == 0 :
+                attempt += 1
+                self._notify('Please mount Volume "%s" on device "%s" %s\nRetry #%d scheduled for %s ...\n' %
+                             (child.match.groups()[0],
+                              self.device,
+                              child.match.groups()[1],
+                              attempt,
+                              (datetime.now() + timedelta(seconds = self.retry_interval)).strftime('%F %T')),
+                             urgent = True,
+                             timeout = self.retry_interval)
+                time.sleep(self.retry_interval)
+                child.sendline('')
+            else :
+                child.close()
+                if attempt > 0 :
+                    self._notify('Extraction %s' % ('succeeded' if child.exitstatus == 0 else 'failed'))
+                break
+            
         return realpath
         
     def getattr(self, path):
@@ -677,7 +705,7 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="database driver [default: %default]")
     server.parser.add_option(mountopt="address", metavar="SERVER", default=server.address,
                              help="database server address [default: %default]")
-    server.parser.add_option(mountopt="port", metavar="PORT", default=server.port,
+    server.parser.add_option(mountopt="port", metavar="PORT", default=server.port, type="int",
                              help="database server port")
     server.parser.add_option(mountopt="database", metavar="PATH", default=server.database,
                              help="database name [default: %default]")
@@ -690,11 +718,13 @@ BaculaFS: expose the Bacula catalog as a user-space file system
     server.parser.add_option(mountopt="client", metavar="CLIENT", default=server.client,
                              help="file daemon name")
     server.parser.add_option(mountopt="fileset", metavar="FILESET", default=server.fileset,
-                             help="fileset")
+                             help="backup fileset")
     server.parser.add_option(mountopt="device", metavar="DEVICE", default=server.device,
                              help="storage device name [default: %default]")
     server.parser.add_option(mountopt="datetime", metavar="'YYYY-MM-DD hh:mm:ss'", default=server.datetime,
                              help="snapshot date/time [default: now]")
+    server.parser.add_option(mountopt="retry_interval", metavar="SECONDS", default=server.retry_interval, type="int",
+                             help="bextract time interval between volume access retries upon failure [default: %default]")
     server.parser.add_option(mountopt="move_root", action="store_true", default=server.move_root,
                              help="make absolute path symlinks point to path under mount point  [default: %default]")
     server.parser.add_option(mountopt="notify", action="store_true", default=server.notify,
