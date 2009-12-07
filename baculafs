@@ -55,6 +55,17 @@ def makedirs(path):
         else:
             raise
                             
+def touch(fname, times = None):
+    '''
+    touch file
+    adapted from: http://stackoverflow.com/questions/1158076/implement-touch-using-python/1160227#1160227
+    '''
+    fhandle = open(fname, 'a')
+    try:
+        os.utime(fname, times)
+    finally:
+        fhandle.close()
+        
 
 class SQL :
     '''
@@ -432,10 +443,13 @@ class FileSystem(Fuse) :
         self.device = 'FileStorage'
         self.retry_interval = 5*60
         self.datetime = None
+        self.user_cache_path = None
         self.move_root = False
         self.notify = False
         self.pynotify = None
         self.notification = None
+        self.preload_attrs = False
+        self.preload_symlinks = False
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
         class File (FileSystem._File):
@@ -510,12 +524,17 @@ class FileSystem(Fuse) :
         '''
         Initialize database, catalog
         '''
-        self._notify("Populating file system ... ", 0)
-        self.cache_prefix = tempfile.mkdtemp(prefix='baculafs-')
+        self._notify("Populating file system ... ", timeout=0)
+        if self.user_cache_path :
+            self.cache_prefix = self.user_cache_path
+        else :
+            self.cache_prefix = tempfile.mkdtemp(prefix='baculafs-')
         self.cache_path = os.path.normpath(self.cache_prefix + '/files')
         makedirs(self.cache_path)
         self.cache_bsrpath = os.path.normpath(self.cache_prefix + '/bsr')
         makedirs(self.cache_bsrpath)
+        self.cache_symlinks = os.path.normpath(self.cache_prefix + '/symlinks')
+        makedirs(self.cache_symlinks)
         self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
         self.db = Database(self.driver,
                            self.database,
@@ -528,9 +547,18 @@ class FileSystem(Fuse) :
         # we don't need the database anymore
         self.db = None 
 
+        self.links = []
+        if self.preload_symlinks :
+            self.preload_attrs = True
+        
         for file in files :
             # make file entry
-            entry = file[2:] + (None,) # stat info placeholder
+            if self.preload_attrs :
+                entry = file[2:] + self._bacula_stat(file[-2])
+                if self.preload_symlinks and stat.S_ISLNK(entry[-1].st_mode) :
+                    self.links.append([file[0] + file[1]])
+            else :
+                entry = file[2:] + (None,) # stat info placeholder
             head = file[0]
             tail = file[1]
             # handle windows directories
@@ -549,6 +577,9 @@ class FileSystem(Fuse) :
             # and finally
             self.dirs[head][tail] = entry
 
+        if self.verbose and self.preload_symlinks :
+            self._notify("Extracting %d symlinks ... " % len(self.links), 0)
+            self._extract(self.links) # FIXME: _extract accepts a single path!
         self._notify("Ready (%d files)." % len(files))
 
     def _extract(self, path) :
@@ -556,14 +587,10 @@ class FileSystem(Fuse) :
         extract path from storage, return path of extracted file
         '''
         realpath = os.path.normpath(self.cache_path + path)
+        symlinkpath = os.path.normpath(self.cache_symlinks + path)
         if self.verbose :
             print path
             print realpath
-        # return if file has already been extracted
-        if os.path.exists(realpath) or os.path.lexists(realpath) :
-            if self.verbose :
-                print 'FILE IN CACHE'
-            return realpath
         head, tail = os.path.split(path)
         # sanity check: path should not be a directory
         if head == tail or tail == '':
@@ -576,6 +603,27 @@ class FileSystem(Fuse) :
         # sanity check: path entry is incomplete
         if len(self.dirs[head][tail]) == 1 :
             raise RuntimeError, 'incomplete entry for path %s' % path
+        # return if file has already been extracted
+        bs = self.dirs[head][tail][-1]
+        is_symlink = stat.S_ISLNK(bs.st_mode)
+        found = False
+        if os.path.exists(realpath) or os.path.lexists(realpath) :
+            # do not trust user supplied cache path:
+            # make sure that stat info of realpath matches path
+            if self.user_cache_path :
+                s = os.lstat(realpath)
+                conds = [getattr(s, attr) == getattr(bs, attr)
+                         for attr in ['st_mode', 'st_uid', 'st_gid', 'st_size', 'st_mtime']]
+                if is_symlink :
+                    conds[-1] = (os.path.exists(symlinkpath) and
+                                 bs.st_mtime == os.stat(symlinkpath).st_mtime)
+                found = all(conds)
+            else :
+                found = True
+            if found :
+                if self.verbose:
+                    print 'FILE IN CACHE'
+                return realpath
         # construct bootstrap file for path
         fileindex, jobid = self.dirs[head][tail][0:2]
         jobs = [job for job in self.catalog.jobs
@@ -612,7 +660,7 @@ class FileSystem(Fuse) :
                              searchwindowsize=200)
             if i == 0 :
                 attempt += 1
-                self._notify('Please mount Volume "%s" on device "%s" %s\nRetry #%d scheduled for %s ...\n' %
+                self._notify('\nPlease mount Volume "%s" on device "%s" %s\nRetry #%d scheduled for %s ...\n' %
                              (child.match.groups()[0],
                               self.device,
                               child.match.groups()[1],
@@ -624,6 +672,12 @@ class FileSystem(Fuse) :
                 child.sendline('')
             else :
                 child.close()
+                if child.exitstatus == 0 :
+                    # it seems that bextract does not restore mtime for symlinks
+                    # so we create a normal file with same mtime as stored symlink
+                    if is_symlink :
+                        makedirs(os.path.dirname(symlinkpath))
+                        touch(symlinkpath, (bs.st_atime, bs.st_mtime))
                 if attempt > 0 :
                     self._notify('Extraction %s' % ('succeeded' if child.exitstatus == 0 else 'failed'))
                 break
@@ -723,10 +777,16 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="storage device name [default: %default]")
     server.parser.add_option(mountopt="datetime", metavar="'YYYY-MM-DD hh:mm:ss'", default=server.datetime,
                              help="snapshot date/time [default: now]")
-    server.parser.add_option(mountopt="retry_interval", metavar="SECONDS", default=server.retry_interval, type="int",
-                             help="bextract time interval between volume access retries upon failure [default: %default]")
     server.parser.add_option(mountopt="move_root", action="store_true", default=server.move_root,
                              help="make absolute path symlinks point to path under mount point  [default: %default]")
+    server.parser.add_option(mountopt="preload_attrs", action="store_true", default=server.preload_symlinks,
+                             help="read and parse attributes for all files upon filesystem initialization  [default: %default]")
+    server.parser.add_option(mountopt="preload_symlinks", action="store_true", default=server.preload_symlinks,
+                             help="extract all symbolic links upon filesystem initialization (implies preload_attrs) [default: %default]")
+    server.parser.add_option(mountopt="retry_interval", metavar="SECONDS", default=server.retry_interval, type="int",
+                             help="bextract time interval between volume access retries upon failure [default: %default]")
+    server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
+                             help="user specified cache path (this should usually be combined with preload_symlinks) [default: %default]")
     server.parser.add_option(mountopt="notify", action="store_true", default=server.notify,
                              help="enable notifications [default: %default]")
     server.parser.add_option(mountopt="verbose", action="store_true", default=server.verbose,
