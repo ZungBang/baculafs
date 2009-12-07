@@ -1,20 +1,23 @@
 TODO
 ----
-- parse file stat info
-- generate bsr on read access, call bextract
-- we need a way to notify users that a volume is needed, and respond
-  to user actions: look at
-   /usr/share/doc/python-notify/examples/test-multi-actions.py
 - db locking? how to prevent bacula from writing to the database?
   can this be done at all?
-- for each query check that we get a result and that it has the
-  expected number of rows
-- allow specifying volume id? (like in ua_restore code)
 - use bacula-dir.conf to extract database connection info ?
 - use python's logging facility for debug messages
+- optimize bsr
+- allow full filesystem caching (useful for initial rsync)
 
++ for each query check that we get a result and that it has the
+  expected number of rows
++ we need a way to notify users that a volume is needed, and respond
+  to user actions: look at
+   /usr/share/doc/python-notify/examples/test-multi-actions.py
++ generate bsr on read access, call bextract
++ parse file stat info
 + allow any date    
 
++ [CANCELLED] allow specifying volume id? (like in ua_restore code)
+   (why?)
 + [CANCELLED] handle acl in job selection
   (does not apply)
 + [CANCELLED] for each database driver prepare an sql query with

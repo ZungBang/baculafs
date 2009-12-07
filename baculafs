@@ -520,6 +520,160 @@ class FileSystem(Fuse) :
         self._add_parent_dirs(head_dir)
 
     
+    def _extract(self, path_list) :
+        '''
+        extract path list from storage, returns path list of extracted files
+        '''
+        items = {}
+        realpath_list = []
+        
+        for path in path_list :
+            realpath, symlinkinfo, volumes = self._find_volumes(path)
+            realpath_list.append(realpath)
+            if volumes :
+                items[realpath] = (symlinkinfo, volumes)
+
+        if len(items) > 0 :
+            rc, sig = self._bextract(items)
+            # it seems that bextract does not restore mtime for symlinks
+            # so we create a normal file with same mtime as stored symlink
+            if rc == 0 :
+                for item in items.values() :
+                    if item[0] :
+                        symlinkfile = item[0][0]
+                        symlinktime = item[0][1:]
+                        makedirs(os.path.dirname(symlinkfile))
+                        touch(symlinkfile, symlinktime)
+
+        return realpath_list
+    
+
+    def _find_volumes(self, path) :
+        '''
+        return list of volumes that contain path to be extracted, 
+        if the path has not been extracted yet
+        '''
+        realpath = os.path.normpath(self.cache_path + path)
+        symlinkpath = os.path.normpath(self.cache_symlinks + path)
+        if self.verbose :
+            print path
+            print realpath
+        head, tail = os.path.split(path)
+        # sanity check: path should not be a directory
+        if head == tail or tail == '':
+            raise RuntimeError, 'trying to extract a directory %s' % path
+        # check that path exists in catalog
+        if not head.endswith('/') :
+            head = head + '/'
+        if head not in self.dirs or tail not in self.dirs[head] :
+            return None, None, None
+        # sanity check: path entry is incomplete
+        if len(self.dirs[head][tail]) == 1 :
+            raise RuntimeError, 'incomplete entry for path %s' % path
+        # return if file has already been extracted
+        bs = self.dirs[head][tail][-1]
+        is_symlink = stat.S_ISLNK(bs.st_mode)
+        found = False
+        if os.path.exists(realpath) or os.path.lexists(realpath) :
+            # do not trust user supplied cache path:
+            # make sure that stat info of realpath matches path
+            if self.user_cache_path :
+                s = os.lstat(realpath)
+                conds = [getattr(s, attr) == getattr(bs, attr)
+                         for attr in ['st_mode', 'st_uid', 'st_gid', 'st_size', 'st_mtime']]
+                if is_symlink :
+                    conds[-1] = (os.path.exists(symlinkpath) and
+                                 bs.st_mtime == os.stat(symlinkpath).st_mtime)
+                found = all(conds)
+            else :
+                found = True
+            if found :
+                if self.verbose:
+                    print 'FILE IN CACHE'
+                return realpath, None, None
+        # construct bootstrap file for path
+        fileindex, jobid = self.dirs[head][tail][0:2]
+        jobs = [job for job in self.catalog.jobs
+                if job[0] == jobid]
+        volumes = [[volume[1],   # 0-Volume
+                    volume[2],   # 1-MediaType
+                    self.device, # 2-Device
+                    jobs[0][1],  # 3-VolSessionId
+                    jobs[0][2],  # 4-VolSessionTime
+                    (volume[5] << 32) | volume[7], # 5-VolAddr: StartAddr
+                    (volume[6] << 32) | volume[8], # 6-VolAddr: EndAddr
+                    fileindex]   # 7-FileIndex
+                   for volume in self.catalog.volumes
+                   if (volume[0] == jobid and 
+                       volume[3] <= fileindex and
+                       fileindex <= volume[4])]
+        
+        return realpath, (symlinkpath, bs.st_atime, bs.st_mtime) if is_symlink else None, volumes
+        
+    def _bextract(self, items) :
+        '''
+        extract list of items from Bacula storage device
+        '''
+        bsrpath = self._write_bsr(items)
+        cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
+        if self.verbose :
+            print cmd
+        child = pexpect.spawn(cmd)
+        if self.verbose :
+            child.logfile = sys.stdout
+
+        attempt = 0
+        missing = ''
+        while True :
+            # bextract either finishes or waits for a missing volume
+            i = child.expect([self.fail_pattern, pexpect.EOF],
+                             timeout=None,
+                             searchwindowsize=200)
+            if i == 0 :
+                # count retries
+                if missing == child.match.groups()[0] :
+                    attempt += 1
+                else :
+                    attempt = 1
+                    missing = child.match.groups()[0]
+                # notify user
+                self._notify('\nPlease mount Volume "%s" on device "%s" %s\nRetry #%d scheduled for %s ...\n' %
+                             (missing,
+                              self.device,
+                              child.match.groups()[1],
+                              attempt,
+                              (datetime.now() + timedelta(seconds = self.retry_interval)).strftime('%F %T')),
+                             urgent = True,
+                             timeout = self.retry_interval)
+                # wait and retry
+                time.sleep(self.retry_interval)
+                child.sendline('')
+            else :
+                child.close()
+                break
+
+        return (child.exitstatus, child.signalstatus)
+    
+    def _write_bsr(self, items) :
+        '''
+        generate bsr for items to be extracted
+        '''
+        # FIXME: optimize bsr
+        bsrfd, bsrpath = tempfile.mkstemp(suffix='.bsr', dir=self.cache_bsrpath, text=True)
+        for item in items.values() :
+            for volume in item[-1] :
+                os.write(bsrfd, 'Volume="%s"\n' % volume[0])
+                os.write(bsrfd, 'MediaType="%s"\n' % volume[1])
+                os.write(bsrfd, 'Device="%s"\n' % volume[2]) 
+                os.write(bsrfd, 'VolSessionId=%d\n' % volume[3])
+                os.write(bsrfd, 'VolSessionTime=%d\n' % volume[4])
+                os.write(bsrfd, 'VolAddr=%d-%d\n' % (volume[5],volume[6]))
+                os.write(bsrfd, 'FileIndex=%d\n' % volume[7])
+                os.write(bsrfd, 'Count=1\n')
+        os.close(bsrfd)
+        return bsrpath
+        
+
     def fsinit(self):
         '''
         Initialize database, catalog
@@ -556,7 +710,7 @@ class FileSystem(Fuse) :
             if self.preload_attrs :
                 entry = file[2:] + self._bacula_stat(file[-2])
                 if self.preload_symlinks and stat.S_ISLNK(entry[-1].st_mode) :
-                    self.links.append([file[0] + file[1]])
+                    self.links.append(file[0] + file[1])
             else :
                 entry = file[2:] + (None,) # stat info placeholder
             head = file[0]
@@ -579,111 +733,10 @@ class FileSystem(Fuse) :
 
         if self.verbose and self.preload_symlinks :
             self._notify("Extracting %d symlinks ... " % len(self.links), 0)
-            self._extract(self.links) # FIXME: _extract accepts a single path!
+            self._extract(self.links) 
         self._notify("Ready (%d files)." % len(files))
 
-    def _extract(self, path) :
-        '''
-        extract path from storage, return path of extracted file
-        '''
-        realpath = os.path.normpath(self.cache_path + path)
-        symlinkpath = os.path.normpath(self.cache_symlinks + path)
-        if self.verbose :
-            print path
-            print realpath
-        head, tail = os.path.split(path)
-        # sanity check: path should not be a directory
-        if head == tail or tail == '':
-            raise RuntimeError, 'trying to extract a directory %s' % path
-        # check that path exists in catalog
-        if not head.endswith('/') :
-            head = head + '/'
-        if head not in self.dirs or tail not in self.dirs[head] :
-            return None
-        # sanity check: path entry is incomplete
-        if len(self.dirs[head][tail]) == 1 :
-            raise RuntimeError, 'incomplete entry for path %s' % path
-        # return if file has already been extracted
-        bs = self.dirs[head][tail][-1]
-        is_symlink = stat.S_ISLNK(bs.st_mode)
-        found = False
-        if os.path.exists(realpath) or os.path.lexists(realpath) :
-            # do not trust user supplied cache path:
-            # make sure that stat info of realpath matches path
-            if self.user_cache_path :
-                s = os.lstat(realpath)
-                conds = [getattr(s, attr) == getattr(bs, attr)
-                         for attr in ['st_mode', 'st_uid', 'st_gid', 'st_size', 'st_mtime']]
-                if is_symlink :
-                    conds[-1] = (os.path.exists(symlinkpath) and
-                                 bs.st_mtime == os.stat(symlinkpath).st_mtime)
-                found = all(conds)
-            else :
-                found = True
-            if found :
-                if self.verbose:
-                    print 'FILE IN CACHE'
-                return realpath
-        # construct bootstrap file for path
-        fileindex, jobid = self.dirs[head][tail][0:2]
-        jobs = [job for job in self.catalog.jobs
-                if job[0] == jobid]
-        volumes = [volume for volume in self.catalog.volumes
-                   if (volume[0] == jobid and 
-                       volume[3] <= fileindex and
-                       fileindex <= volume[4])]
-        bsrfd, bsrpath = tempfile.mkstemp(suffix='.bsr', dir=self.cache_bsrpath, text=True)
-        for volume in volumes :
-            os.write(bsrfd, 'Volume="%s"\n' % volume[1])
-            os.write(bsrfd, 'MediaType="%s"\n' % volume[2])
-            os.write(bsrfd, 'Device="%s"\n' % self.device) 
-            os.write(bsrfd, 'VolSessionId=%d\n' % jobs[0][1])
-            os.write(bsrfd, 'VolSessionTime=%d\n' % jobs[0][2])
-            StartAddr = (volume[5] << 32) | volume[7]
-            EndAddr = (volume[6] << 32) | volume[8]
-            os.write(bsrfd, 'VolAddr=%d-%d\n' % (StartAddr,EndAddr))
-            os.write(bsrfd, 'FileIndex=%d\n' % fileindex)
-            os.write(bsrfd, 'Count=1\n')
-        os.close(bsrfd)
-        
-        # extract the file
-        cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
-        if self.verbose :
-            print cmd
-        child = pexpect.spawn(cmd)
-        if self.verbose :
-            child.logfile = sys.stdout
-        attempt = 0
-        while True :
-            i = child.expect([self.fail_pattern, pexpect.EOF],
-                             timeout=None,
-                             searchwindowsize=200)
-            if i == 0 :
-                attempt += 1
-                self._notify('\nPlease mount Volume "%s" on device "%s" %s\nRetry #%d scheduled for %s ...\n' %
-                             (child.match.groups()[0],
-                              self.device,
-                              child.match.groups()[1],
-                              attempt,
-                              (datetime.now() + timedelta(seconds = self.retry_interval)).strftime('%F %T')),
-                             urgent = True,
-                             timeout = self.retry_interval)
-                time.sleep(self.retry_interval)
-                child.sendline('')
-            else :
-                child.close()
-                if child.exitstatus == 0 :
-                    # it seems that bextract does not restore mtime for symlinks
-                    # so we create a normal file with same mtime as stored symlink
-                    if is_symlink :
-                        makedirs(os.path.dirname(symlinkpath))
-                        touch(symlinkpath, (bs.st_atime, bs.st_mtime))
-                if attempt > 0 :
-                    self._notify('Extraction %s' % ('succeeded' if child.exitstatus == 0 else 'failed'))
-                break
-            
-        return realpath
-        
+
     def getattr(self, path):
         '''
         Retrieve file attributes.
@@ -715,7 +768,7 @@ class FileSystem(Fuse) :
                 yield fuse.Direntry(key)
             
     def readlink(self, path):
-        realpath = self._extract(path)
+        realpath = self._extract([path])[0]
         if realpath :
             link = os.readlink(realpath)
             if self.move_root and link.startswith('/') :
@@ -730,7 +783,7 @@ class FileSystem(Fuse) :
             if (flags & accmode) != os.O_RDONLY:
                 raise IOError(errno.EACCES, '')
             self.path = path
-            self.realpath = fs._extract(path)
+            self.realpath = fs._extract([path])[0]
             self.file = os.fdopen(os.open(self.realpath, flags, *mode), flag2mode(flags))
             self.fd = self.file.fileno()
             self.direct_io = False
