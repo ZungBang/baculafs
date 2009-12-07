@@ -524,21 +524,23 @@ class FileSystem(Fuse) :
         '''
         extract path list from storage, returns path list of extracted files
         '''
-        items = {}
+        items = []
         realpath_list = []
         
         for path in path_list :
             realpath, symlinkinfo, volumes = self._find_volumes(path)
             realpath_list.append(realpath)
             if volumes :
-                items[realpath] = (symlinkinfo, volumes)
+                items.append((symlinkinfo, volumes))
 
         if len(items) > 0 :
             rc, sig = self._bextract(items)
             # it seems that bextract does not restore mtime for symlinks
             # so we create a normal file with same mtime as stored symlink
+            # (note that we only use that file if the cache path was
+            # supplied bu the user)
             if rc == 0 :
-                for item in items.values() :
+                for item in items :
                     if item[0] :
                         symlinkfile = item[0][0]
                         symlinktime = item[0][1:]
@@ -591,7 +593,7 @@ class FileSystem(Fuse) :
                 if self.verbose:
                     print 'FILE IN CACHE'
                 return realpath, None, None
-        # construct bootstrap file for path
+        # generate list of volumes for path
         fileindex, jobid = self.dirs[head][tail][0:2]
         jobs = [job for job in self.catalog.jobs
                 if job[0] == jobid]
@@ -653,14 +655,13 @@ class FileSystem(Fuse) :
                 break
 
         return (child.exitstatus, child.signalstatus)
-    
+
     def _write_bsr(self, items) :
         '''
         generate bsr for items to be extracted
         '''
-        # FIXME: optimize bsr
         bsrfd, bsrpath = tempfile.mkstemp(suffix='.bsr', dir=self.cache_bsrpath, text=True)
-        for item in items.values() :
+        for item in items :
             for volume in item[-1] :
                 os.write(bsrfd, 'Volume="%s"\n' % volume[0])
                 os.write(bsrfd, 'MediaType="%s"\n' % volume[1])
@@ -678,64 +679,67 @@ class FileSystem(Fuse) :
         '''
         Initialize database, catalog
         '''
-        self._notify("Populating file system ... ", timeout=0)
-        if self.user_cache_path :
-            self.cache_prefix = self.user_cache_path
-        else :
-            self.cache_prefix = tempfile.mkdtemp(prefix='baculafs-')
-        self.cache_path = os.path.normpath(self.cache_prefix + '/files')
-        makedirs(self.cache_path)
-        self.cache_bsrpath = os.path.normpath(self.cache_prefix + '/bsr')
-        makedirs(self.cache_bsrpath)
-        self.cache_symlinks = os.path.normpath(self.cache_prefix + '/symlinks')
-        makedirs(self.cache_symlinks)
-        self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
-        self.db = Database(self.driver,
-                           self.database,
-                           self.username,
-                           self.password,
-                           self.verbose)
-        self.catalog = Catalog(self.db)
-        self.base64 = Base64()
-        files = self.catalog.query(self.client, self.fileset, self.datetime)
-        # we don't need the database anymore
-        self.db = None 
-
-        self.links = []
-        if self.preload_symlinks :
-            self.preload_attrs = True
-        
-        for file in files :
-            # make file entry
-            if self.preload_attrs :
-                entry = file[2:] + self._bacula_stat(file[-2])
-                if self.preload_symlinks and stat.S_ISLNK(entry[-1].st_mode) :
-                    self.links.append(file[0] + file[1])
+        try :
+            self._notify("Populating file system ... ", timeout=0)
+            if self.user_cache_path :
+                self.cache_prefix = self.user_cache_path
             else :
-                entry = file[2:] + (None,) # stat info placeholder
-            head = file[0]
-            tail = file[1]
-            # handle windows directories
-            if not head.startswith('/') :
-                head = '/'+head
-            # new directory
-            if head not in self.dirs :
-                self.dirs[head] = {}
-            # add parent directories
-            self._add_parent_dirs(head)
-            # directories are added to their parents
-            if tail == '' :
-                head, tail = os.path.split(head[:-1])
-                if not head.endswith('/') :
-                    head += '/'
-            # and finally
-            self.dirs[head][tail] = entry
+                self.cache_prefix = tempfile.mkdtemp(prefix='baculafs-')
+            self.cache_path = os.path.normpath(self.cache_prefix + '/files')
+            makedirs(self.cache_path)
+            self.cache_bsrpath = os.path.normpath(self.cache_prefix + '/bsr')
+            makedirs(self.cache_bsrpath)
+            self.cache_symlinks = os.path.normpath(self.cache_prefix + '/symlinks')
+            makedirs(self.cache_symlinks)
+            self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
+            self.db = Database(self.driver,
+                               self.database,
+                               self.username,
+                               self.password,
+                               self.verbose)
+            self.catalog = Catalog(self.db)
+            self.base64 = Base64()
+            files = self.catalog.query(self.client, self.fileset, self.datetime)
+            # we don't need the database anymore
+            self.db = None 
 
-        if self.verbose and self.preload_symlinks :
-            self._notify("Extracting %d symlinks ... " % len(self.links), 0)
-            self._extract(self.links) 
-        self._notify("Ready (%d files)." % len(files))
+            symlinks = []
+            if self.preload_symlinks :
+                self.preload_attrs = True
 
+            for file in files :
+                # make file entry
+                if self.preload_attrs :
+                    entry = file[2:] + self._bacula_stat(file[-2])
+                    if self.preload_symlinks and stat.S_ISLNK(entry[-1].st_mode) :
+                        symlinks.append(file[0] + file[1])
+                else :
+                    entry = file[2:] + (None,) # stat info placeholder
+                head = file[0]
+                tail = file[1]
+                # handle windows directories
+                if not head.startswith('/') :
+                    head = '/'+head
+                # new directory
+                if head not in self.dirs :
+                    self.dirs[head] = {}
+                # add parent directories
+                self._add_parent_dirs(head)
+                # directories are added to their parents
+                if tail == '' :
+                    head, tail = os.path.split(head[:-1])
+                    if not head.endswith('/') :
+                        head += '/'
+                # and finally
+                self.dirs[head][tail] = entry
+
+            if self.verbose and self.preload_symlinks :
+                self._notify("Extracting %d symlinks ... " % len(symlinks), 0)
+                self._extract(symlinks) 
+            self._notify("Ready (%d files)." % len(files))
+        except :
+            traceback.print_exc()
+            pass
 
     def getattr(self, path):
         '''

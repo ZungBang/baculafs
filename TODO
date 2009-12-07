@@ -4,9 +4,11 @@ TODO
   can this be done at all?
 - use bacula-dir.conf to extract database connection info ?
 - use python's logging facility for debug messages
-- optimize bsr
 - allow full filesystem caching (useful for initial rsync)
-
+- add support for other database drivers
+- package (with easy install?)
+- add option to clear cache on umount
+   
 + for each query check that we get a result and that it has the
   expected number of rows
 + we need a way to notify users that a volume is needed, and respond
@@ -16,6 +18,8 @@ TODO
 + parse file stat info
 + allow any date    
 
++ [CANCELLED] optimize bsr (sort and group files)
+   bextract seems to do it already
 + [CANCELLED] allow specifying volume id? (like in ua_restore code)
    (why?)
 + [CANCELLED] handle acl in job selection
