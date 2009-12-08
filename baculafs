@@ -67,6 +67,22 @@ def touch(fname, times = None):
         fhandle.close()
         
 
+def bextract_version() :
+    '''
+    return version string of bextract,
+    return None if not runnable or version cannot be parsed
+    '''
+    version = None
+    try :
+        child = pexpect.spawn('bextract -?')
+        i = child.expect(['Version: ([^(]*) \(([^)]*)\)', pexpect.EOF])
+        if i == 0 :
+            version = '%s (%s)' % child.match.groups()
+        child.close()
+    except :
+        pass
+    return version
+
 class SQL :
     '''
     Holds all SQL statements used by baculafs.
@@ -279,12 +295,12 @@ class Database :
     This class shields the rest of the code from the pesky details of
     actually accessing one of the supported databases.
     '''
-    def __init__(self, driver, database, username, password, verbose) :
+    def __init__(self, driver, database, username, password, trace) :
         '''
         Initialize database driver: connect the database,
         create connection and cusror objects.
         '''
-        self.verbose = verbose
+        self.trace = trace
         self.connection = None
         self.cursor = None
         if driver == 'sqlite3' :
@@ -311,7 +327,7 @@ class Database :
         '''
         Execute SQL and fetch all results
         '''
-        if self.verbose :
+        if self.trace :
             print sql
         self.cursor.execute(sql)
         return self.cursor.fetchall()
@@ -430,7 +446,7 @@ class FileSystem(Fuse) :
         '''
 
         # default option values
-        self.verbose = False
+        self.trace = False
         self.driver = 'sqlite3'
         self.database = '/var/lib/bacula/bacula.db'
         self.address = 'localhost'
@@ -448,8 +464,8 @@ class FileSystem(Fuse) :
         self.notify = False
         self.pynotify = None
         self.notification = None
-        self.preload_attrs = False
-        self.preload_symlinks = False
+        self.prefetch_attrs = False
+        self.prefetch_symlinks = False
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
         class File (FileSystem._File):
@@ -557,9 +573,6 @@ class FileSystem(Fuse) :
         '''
         realpath = os.path.normpath(self.cache_path + path)
         symlinkpath = os.path.normpath(self.cache_symlinks + path)
-        if self.verbose :
-            print path
-            print realpath
         head, tail = os.path.split(path)
         # sanity check: path should not be a directory
         if head == tail or tail == '':
@@ -590,8 +603,6 @@ class FileSystem(Fuse) :
             else :
                 found = True
             if found :
-                if self.verbose:
-                    print 'FILE IN CACHE'
                 return realpath, None, None
         # generate list of volumes for path
         fileindex, jobid = self.dirs[head][tail][0:2]
@@ -618,10 +629,10 @@ class FileSystem(Fuse) :
         '''
         bsrpath = self._write_bsr(items)
         cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
-        if self.verbose :
+        if self.trace :
             print cmd
         child = pexpect.spawn(cmd)
-        if self.verbose :
+        if self.trace :
             child.logfile = sys.stdout
 
         attempt = 0
@@ -696,7 +707,7 @@ class FileSystem(Fuse) :
                                self.database,
                                self.username,
                                self.password,
-                               self.verbose)
+                               self.trace)
             self.catalog = Catalog(self.db)
             self.base64 = Base64()
             files = self.catalog.query(self.client, self.fileset, self.datetime)
@@ -704,14 +715,14 @@ class FileSystem(Fuse) :
             self.db = None 
 
             symlinks = []
-            if self.preload_symlinks :
-                self.preload_attrs = True
+            if self.prefetch_symlinks :
+                self.prefetch_attrs = True
 
             for file in files :
                 # make file entry
-                if self.preload_attrs :
+                if self.prefetch_attrs :
                     entry = file[2:] + self._bacula_stat(file[-2])
-                    if self.preload_symlinks and stat.S_ISLNK(entry[-1].st_mode) :
+                    if self.prefetch_symlinks and stat.S_ISLNK(entry[-1].st_mode) :
                         symlinks.append(file[0] + file[1])
                 else :
                     entry = file[2:] + (None,) # stat info placeholder
@@ -733,13 +744,16 @@ class FileSystem(Fuse) :
                 # and finally
                 self.dirs[head][tail] = entry
 
-            if self.verbose and self.preload_symlinks :
-                self._notify("Extracting %d symlinks ... " % len(symlinks), 0)
-                self._extract(symlinks) 
+            nlinks = len(symlinks)
+            if nlinks > 0 :
+                self._notify("Extracting %d symlinks ... " % nlinks)
+                self._extract(symlinks)
+            if self.trace :
+                print 'Cache directory is: %s' % self.cache_prefix
             self._notify("Ready (%d files)." % len(files))
         except :
             traceback.print_exc()
-            pass
+            sys.exit(errno.EIO)
 
     def getattr(self, path):
         '''
@@ -761,6 +775,13 @@ class FileSystem(Fuse) :
             if not attrs :
                 self.dirs[head][tail] = self.dirs[head][tail][:-1] + self._bacula_stat(self.dirs[head][tail][-3])
                 attrs = self.dirs[head][tail][-1]
+            # zero negative timestamps
+            for a in ['st_atime','st_mtime','st_ctime'] :
+                t = getattr(attrs, a) 
+                if t < 0 :
+                    if self.trace :
+                        print 'warning: %s has negative timestamp %s=%d, will use 0' % (path, a, t)
+                    setattr(attrs, a, 0)
             return attrs
         else:
             return -errno.ENOENT
@@ -808,7 +829,11 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
 """ + Fuse.fusage
 
-    server = FileSystem(version="BaculaFS version: %s\nPython FUSE version: %s" % (__version__, fuse.__version__), usage=usage)
+    bacula_version = bextract_version()
+    if not bacula_version :
+        raise fuse.FuseError('cannot determine Bacula bextract version - is it installed?')
+    
+    server = FileSystem(version="BaculaFS version: %s\nbextract version: %s\nPython FUSE version: %s" % (__version__, bacula_version, fuse.__version__), usage=usage)
 
     server.multithreaded = False
 
@@ -836,18 +861,18 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="snapshot date/time [default: now]")
     server.parser.add_option(mountopt="move_root", action="store_true", default=server.move_root,
                              help="make absolute path symlinks point to path under mount point  [default: %default]")
-    server.parser.add_option(mountopt="preload_attrs", action="store_true", default=server.preload_symlinks,
+    server.parser.add_option(mountopt="prefetch_attrs", action="store_true", default=server.prefetch_symlinks,
                              help="read and parse attributes for all files upon filesystem initialization  [default: %default]")
-    server.parser.add_option(mountopt="preload_symlinks", action="store_true", default=server.preload_symlinks,
-                             help="extract all symbolic links upon filesystem initialization (implies preload_attrs) [default: %default]")
+    server.parser.add_option(mountopt="prefetch_symlinks", action="store_true", default=server.prefetch_symlinks,
+                             help="extract all symbolic links upon filesystem initialization (implies prefetch_attrs) [default: %default]")
     server.parser.add_option(mountopt="retry_interval", metavar="SECONDS", default=server.retry_interval, type="int",
-                             help="bextract time interval between volume access retries upon failure [default: %default]")
+                             help="time interval between retries in case of storage volume access failure [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
-                             help="user specified cache path (this should usually be combined with preload_symlinks) [default: %default]")
+                             help="user specified cache path (hint: combine this with prefetch_symlinks) [default: %default]")
     server.parser.add_option(mountopt="notify", action="store_true", default=server.notify,
                              help="enable notifications [default: %default]")
-    server.parser.add_option(mountopt="verbose", action="store_true", default=server.verbose,
-                             help="be verbose [default: %default]")
+    server.parser.add_option(mountopt="trace", action="store_true", default=server.trace,
+                             help="dump debug trace to console (should be used with -f option) [default: %default]")
 
     server.parse(values=server, errex=1)
 
