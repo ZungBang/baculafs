@@ -4,11 +4,11 @@ TODO
   can this be done at all?
 - use bacula-dir.conf to extract database connection info ?
 - use python's logging facility for debug messages
-- allow full filesystem caching (useful for initial rsync)
 - add support for other database drivers
 - package (with easy install?)
 - add option to clear cache on umount
    
++ allow full filesystem caching (useful for initial rsync)
 + for each query check that we get a result and that it has the
   expected number of rows
 + we need a way to notify users that a volume is needed, and respond
