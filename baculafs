@@ -396,6 +396,7 @@ class Catalog :
         diff_jobs = self.db.query(SQL.temp)
         self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]))
         jobs = self.db.query(SQL.jobs)
+        self.most_recent_jobid = jobs[-1][0] if len(jobs) > 1 else -1
         jobs_csl = ','.join([str(job[0]) for job in jobs])
         base_jobs = self.db.query(SQL.base_jobs % jobs_csl)
         all_jobs = jobs + base_jobs
@@ -466,6 +467,7 @@ class FileSystem(Fuse) :
         self.notification = None
         self.prefetch_attrs = False
         self.prefetch_symlinks = False
+        self.prefetch_recent = False
         self.prefetch_everything = False
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
@@ -717,25 +719,35 @@ class FileSystem(Fuse) :
 
             prefetches = []
             if self.prefetch_everything :
+                self.prefetch_recent = False
+                self.prefetch_symlinks = True
+            if self.prefetch_recent :
                 self.prefetch_symlinks = True
             if self.prefetch_symlinks :
                 self.prefetch_attrs = True
 
             for file in files :
-                # make file entry
-                if self.prefetch_attrs :
-                    entry = file[2:] + self._bacula_stat(file[-2])
-                    if self.prefetch_everything and not stat.S_ISDIR(entry[-1].st_mode) :
-                        prefetches.append(file[0] + file[1])
-                    elif self.prefetch_symlinks and stat.S_ISLNK(entry[-1].st_mode) :
-                        prefetches.append(file[0] + file[1])
-                else :
-                    entry = file[2:] + (None,) # stat info placeholder
                 head = file[0]
                 tail = file[1]
                 # handle windows directories
                 if not head.startswith('/') :
                     head = '/'+head
+                # make file entry
+                if self.prefetch_attrs :
+                    entry = file[2:] + self._bacula_stat(file[-2])
+                    filepath = head + tail
+                    if (self.prefetch_everything and 
+                        not stat.S_ISDIR(entry[-1].st_mode)) :
+                        prefetches.append(filepath)
+                    elif (self.prefetch_recent and
+                          file[3] == self.catalog.most_recent_jobid and
+                          not stat.S_ISDIR(entry[-1].st_mode)) :
+                        prefetches.append(filepath)
+                    elif (self.prefetch_symlinks and
+                          stat.S_ISLNK(entry[-1].st_mode)) :
+                        prefetches.append(filepath)
+                else :
+                    entry = file[2:] + (None,) # stat info placeholder
                 # new directory
                 if head not in self.dirs :
                     self.dirs[head] = {}
@@ -870,12 +882,14 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="read and parse attributes for all files upon filesystem initialization  [default: %default]")
     server.parser.add_option(mountopt="prefetch_symlinks", action="store_true", default=server.prefetch_symlinks,
                              help="extract all symbolic links upon filesystem initialization (implies prefetch_attrs) [default: %default]")
+    server.parser.add_option(mountopt="prefetch_recent", action="store_true", default=server.prefetch_recent,
+                             help="extract contents of most recent non-full job upon filesystem initialization (implies prefetch_symlinks) [default: %default]")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
     server.parser.add_option(mountopt="retry_interval", metavar="SECONDS", default=server.retry_interval, type="int",
                              help="time interval between retries in case of storage volume access failure [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
-                             help="user specified cache path (hint: combine this with prefetch_symlinks) [default: %default]")
+                             help="user specified cache path (hint: combine this with one of the prefetch options) [default: %default]")
     server.parser.add_option(mountopt="notify", action="store_true", default=server.notify,
                              help="enable notifications [default: %default]")
     server.parser.add_option(mountopt="trace", action="store_true", default=server.trace,
