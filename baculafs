@@ -8,6 +8,7 @@ import errno
 import tempfile
 import pexpect
 import time
+import re
 from datetime import datetime, timedelta
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
@@ -466,6 +467,7 @@ class FileSystem(Fuse) :
         self.pynotify = None
         self.notification = None
         self.prefetch_attrs = False
+        self.prefetch_regex = None
         self.prefetch_symlinks = False
         self.prefetch_recent = False
         self.prefetch_everything = False
@@ -720,7 +722,16 @@ class FileSystem(Fuse) :
             prefetches = []
             if self.prefetch_everything :
                 self.prefetch_recent = False
+                self.prefetch_regex = None
                 self.prefetch_symlinks = True
+            if self.prefetch_regex :
+                try :
+                    regex = re.compile(self.prefetch_regex)
+                    self.prefetch_attrs = True
+                except :
+                    # bad regex: show traceback and ignore
+                    traceback.print_exc()
+                    self.prefetch_regex = None
             if self.prefetch_recent :
                 self.prefetch_symlinks = True
             if self.prefetch_symlinks :
@@ -742,6 +753,10 @@ class FileSystem(Fuse) :
                     elif (self.prefetch_recent and
                           file[3] == self.catalog.most_recent_jobid and
                           not stat.S_ISDIR(entry[-1].st_mode)) :
+                        prefetches.append(filepath)
+                    elif (self.prefetch_regex and
+                          not stat.S_ISDIR(entry[-1].st_mode) and
+                          regex.match(filepath)) :
                         prefetches.append(filepath)
                     elif (self.prefetch_symlinks and
                           stat.S_ISLNK(entry[-1].st_mode)) :
@@ -882,6 +897,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="read and parse attributes for all files upon filesystem initialization  [default: %default]")
     server.parser.add_option(mountopt="prefetch_symlinks", action="store_true", default=server.prefetch_symlinks,
                              help="extract all symbolic links upon filesystem initialization (implies prefetch_attrs) [default: %default]")
+    server.parser.add_option(mountopt="prefetch_regex", metavar="REGEX", default=server.prefetch_regex,
+                             help="extract all objects that match REGEX upon filesystem initialization (implies prefetch_attrs) [default: %default]")
     server.parser.add_option(mountopt="prefetch_recent", action="store_true", default=server.prefetch_recent,
                              help="extract contents of most recent non-full job upon filesystem initialization (implies prefetch_symlinks) [default: %default]")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
