@@ -349,11 +349,10 @@ class Catalog :
         self.db = database
 
         
-    def query(self, client, fileset = None, timespec = None, volume = None) :
+    def query(self, client, fileset = None, timespec = None, select_recent_job = False ) :
         '''
         Query bacula database, get list of files that match
-        backup prior to given TIMESPEC, for a given CLIENT, FILESET
-        and VOLUME.
+        backup prior to given TIMESPEC, for a given CLIENT, FILESET.
 
         If the date/time is not specified (i.e. it's None) then use
         the current date/time.
@@ -398,6 +397,9 @@ class Catalog :
         self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]))
         jobs = self.db.query(SQL.jobs)
         self.most_recent_jobid = jobs[-1][0] if len(jobs) > 1 else -1
+        # this is a wasteful hack to select files from the most recent job only
+        if select_recent_job and self.most_recent_jobid > 0 :
+            jobs = [jobs[-1]]
         jobs_csl = ','.join([str(job[0]) for job in jobs])
         base_jobs = self.db.query(SQL.base_jobs % jobs_csl)
         all_jobs = jobs + base_jobs
@@ -461,6 +463,7 @@ class FileSystem(Fuse) :
         self.device = 'FileStorage'
         self.retry_interval = 5*60
         self.datetime = None
+        self.recent_job = False
         self.user_cache_path = None
         self.move_root = False
         self.notify = False
@@ -715,7 +718,7 @@ class FileSystem(Fuse) :
                                self.trace)
             self.catalog = Catalog(self.db)
             self.base64 = Base64()
-            files = self.catalog.query(self.client, self.fileset, self.datetime)
+            files = self.catalog.query(self.client, self.fileset, self.datetime, self.recent_job)
             # we don't need the database anymore
             self.db = None 
 
@@ -891,6 +894,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="storage device name [default: %default]")
     server.parser.add_option(mountopt="datetime", metavar="'YYYY-MM-DD hh:mm:ss'", default=server.datetime,
                              help="snapshot date/time [default: now]")
+    server.parser.add_option(mountopt="recent_job", action="store_true", default=server.recent_job,
+                             help="select contents of most recent job only [default: %default]") 
     server.parser.add_option(mountopt="move_root", action="store_true", default=server.move_root,
                              help="make absolute path symlinks point to path under mount point  [default: %default]")
     server.parser.add_option(mountopt="prefetch_attrs", action="store_true", default=server.prefetch_symlinks,
