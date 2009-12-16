@@ -444,6 +444,8 @@ class FileSystem(Fuse) :
 
     fuse_stat_fields = dir(fuse.Stat())
 
+    xattr_fields = ['FileIndex', 'JobId', 'LStat', 'MD5']
+
     def __init__(self, *args, **kw):
         '''
         Initialize filesystem
@@ -789,6 +791,41 @@ class FileSystem(Fuse) :
         except :
             traceback.print_exc()
             sys.exit(errno.EIO)
+
+    def getxattr(self, path, name, size):
+        head, tail = os.path.split(path)
+        head = head if head.endswith('/') else head+'/'
+        if head in self.dirs and tail in self.dirs[head] :
+            if len(self.dirs[head][tail]) == 1 :
+                return -errno.ENODATA
+            else :
+                n = name.replace('user.baculafs.', '')
+                if n in FileSystem.xattr_fields :
+                    val = str(self.dirs[head][tail][FileSystem.xattr_fields.index(n)])
+                else :
+                    return -errno.ENODATA
+                if size == 0:
+                    # We are asked for size of the value.
+                    return len(val)
+                return val
+        else :
+            return -errno.ENOENT
+
+    def listxattr(self, path, size):
+        head, tail = os.path.split(path)
+        head = head if head.endswith('/') else head+'/'
+        if head in self.dirs and tail in self.dirs[head] :
+            if len(self.dirs[head][tail]) == 1 :
+                return -errno.ENODATA
+            else :
+                xattrs = ['user.baculafs.' + a for a in FileSystem.xattr_fields]
+            if size == 0:
+                # We are asked for size of the attr list, ie. joint size of attrs
+                # plus null separators.
+                return len("".join(xattrs)) + len(xattrs)
+            return xattrs
+        else:
+            return -errno.ENOENT
 
     def getattr(self, path):
         '''
