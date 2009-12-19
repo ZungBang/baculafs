@@ -696,101 +696,96 @@ class FileSystem(Fuse) :
         return bsrpath
         
 
-    def fsinit(self):
+    def initialize(self):
         '''
-        Initialize database, catalog
+        initialize database, catalog
         '''
-        try :
-            self._notify("Populating file system ... ", timeout=0)
-            if self.user_cache_path :
-                self.cache_prefix = self.user_cache_path
-            else :
-                self.cache_prefix = tempfile.mkdtemp(prefix='baculafs-')
-            self.cache_path = os.path.normpath(self.cache_prefix + '/files')
-            makedirs(self.cache_path)
-            self.cache_bsrpath = os.path.normpath(self.cache_prefix + '/bsr')
-            makedirs(self.cache_bsrpath)
-            self.cache_symlinks = os.path.normpath(self.cache_prefix + '/symlinks')
-            makedirs(self.cache_symlinks)
-            self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
-            self.db = Database(self.driver,
-                               self.database,
-                               self.username,
-                               self.password,
-                               self.trace)
-            self.catalog = Catalog(self.db)
-            self.base64 = Base64()
-            files = self.catalog.query(self.client, self.fileset, self.datetime, self.recent_job)
-            # we don't need the database anymore
-            self.db = None 
+        print "Populating file system ... "
+        if self.user_cache_path :
+            self.cache_prefix = self.user_cache_path
+        else :
+            self.cache_prefix = tempfile.mkdtemp(prefix='baculafs-')
+        self.cache_path = os.path.normpath(self.cache_prefix + '/files')
+        makedirs(self.cache_path)
+        self.cache_bsrpath = os.path.normpath(self.cache_prefix + '/bsr')
+        makedirs(self.cache_bsrpath)
+        self.cache_symlinks = os.path.normpath(self.cache_prefix + '/symlinks')
+        makedirs(self.cache_symlinks)
+        self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
+        self.db = Database(self.driver,
+                           self.database,
+                           self.username,
+                           self.password,
+                           self.trace)
+        self.catalog = Catalog(self.db)
+        self.base64 = Base64()
+        files = self.catalog.query(self.client, self.fileset, self.datetime, self.recent_job)
+        # we don't need the database anymore
+        self.db = None 
 
-            prefetches = []
-            if self.prefetch_everything :
-                self.prefetch_recent = False
-                self.prefetch_regex = None
-                self.prefetch_symlinks = True
-            if self.prefetch_regex :
-                try :
-                    regex = re.compile(self.prefetch_regex)
-                    self.prefetch_attrs = True
-                except :
-                    # bad regex: show traceback and ignore
-                    traceback.print_exc()
-                    self.prefetch_regex = None
-            if self.prefetch_recent :
-                self.prefetch_symlinks = True
-            if self.prefetch_symlinks :
+        prefetches = []
+        if self.prefetch_everything :
+            self.prefetch_recent = False
+            self.prefetch_regex = None
+            self.prefetch_symlinks = True
+        if self.prefetch_regex :
+            try :
+                regex = re.compile(self.prefetch_regex)
                 self.prefetch_attrs = True
+            except :
+                # bad regex: show traceback and ignore
+                traceback.print_exc()
+                self.prefetch_regex = None
+        if self.prefetch_recent :
+            self.prefetch_symlinks = True
+        if self.prefetch_symlinks :
+            self.prefetch_attrs = True
 
-            for file in files :
-                head = file[0]
-                tail = file[1]
-                # handle windows directories
-                if not head.startswith('/') :
-                    head = '/'+head
-                # make file entry
-                if self.prefetch_attrs :
-                    entry = file[2:] + self._bacula_stat(file[-2])
-                    filepath = head + tail
-                    if (self.prefetch_everything and 
-                        not stat.S_ISDIR(entry[-1].st_mode)) :
-                        prefetches.append(filepath)
-                    elif (self.prefetch_recent and
-                          file[3] == self.catalog.most_recent_jobid and
-                          not stat.S_ISDIR(entry[-1].st_mode)) :
-                        prefetches.append(filepath)
-                    elif (self.prefetch_regex and
-                          not stat.S_ISDIR(entry[-1].st_mode) and
-                          regex.match(filepath)) :
-                        prefetches.append(filepath)
-                    elif (self.prefetch_symlinks and
-                          stat.S_ISLNK(entry[-1].st_mode)) :
-                        prefetches.append(filepath)
-                else :
-                    entry = file[2:] + (None,) # stat info placeholder
-                # new directory
-                if head not in self.dirs :
-                    self.dirs[head] = {}
-                # add parent directories
-                self._add_parent_dirs(head)
-                # directories are added to their parents
-                if tail == '' :
-                    head, tail = os.path.split(head[:-1])
-                    if not head.endswith('/') :
-                        head += '/'
-                # and finally
-                self.dirs[head][tail] = entry
+        for file in files :
+            head = file[0]
+            tail = file[1]
+            # handle windows directories
+            if not head.startswith('/') :
+                head = '/'+head
+            # make file entry
+            if self.prefetch_attrs :
+                entry = file[2:] + self._bacula_stat(file[-2])
+                filepath = head + tail
+                if (self.prefetch_everything and 
+                    not stat.S_ISDIR(entry[-1].st_mode)) :
+                    prefetches.append(filepath)
+                elif (self.prefetch_recent and
+                      file[3] == self.catalog.most_recent_jobid and
+                      not stat.S_ISDIR(entry[-1].st_mode)) :
+                    prefetches.append(filepath)
+                elif (self.prefetch_regex and
+                      not stat.S_ISDIR(entry[-1].st_mode) and
+                      regex.match(filepath)) :
+                    prefetches.append(filepath)
+                elif (self.prefetch_symlinks and
+                      stat.S_ISLNK(entry[-1].st_mode)) :
+                    prefetches.append(filepath)
+            else :
+                entry = file[2:] + (None,) # stat info placeholder
+            # new directory
+            if head not in self.dirs :
+                self.dirs[head] = {}
+            # add parent directories
+            self._add_parent_dirs(head)
+            # directories are added to their parents
+            if tail == '' :
+                head, tail = os.path.split(head[:-1])
+                if not head.endswith('/') :
+                    head += '/'
+            # and finally
+            self.dirs[head][tail] = entry
 
-            npf = len(prefetches)
-            if npf > 0 :
-                self._notify("Prefetching %d objects ... " % npf)
-                self._extract(prefetches)
-            if self.trace :
-                print 'Cache directory is: %s' % self.cache_prefix
-            self._notify("Ready (%d files)." % len(files))
-        except :
-            traceback.print_exc()
-            sys.exit(errno.EIO)
+        npf = len(prefetches)
+        if npf > 0 :
+            print "Prefetching %d objects ... " % npf
+            self._extract(prefetches)
+        print 'Cache directory is: %s' % self.cache_prefix
+        print "BaculaFS ready (%d files)." % len(files)
 
     def getxattr(self, path, name, size):
         head, tail = os.path.split(path)
@@ -956,6 +951,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
     server.parse(values=server, errex=1)
 
+    server.initialize()
+    
     server.main()
 
         
