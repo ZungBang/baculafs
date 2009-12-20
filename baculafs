@@ -976,10 +976,15 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
     server.parse(values=server, errex=1)
 
-    server.initialize()
-    
+    try:
+        if server.fuse_args.mount_expected() :
+            server.initialize()
+    except :
+        traceback.print_exc()
+        sys.exit(1)
+
     server.main()
 
         
 if __name__ == '__main__':
-    sys.exit(main())
+    main()
