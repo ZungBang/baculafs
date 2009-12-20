@@ -808,6 +808,7 @@ class FileSystem(Fuse) :
             print "Prefetching %d objects ... " % npf
             self._extract(prefetches)
         print 'Cache directory is: %s' % self.cache_prefix
+        print 'Jobs in file system: %s' % [job[0] for job in self.catalog.jobs]
         print "BaculaFS ready (%d files)." % len(files)
 
     def getxattr(self, path, name, size):
