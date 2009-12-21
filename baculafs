@@ -357,6 +357,9 @@ class Catalog :
     for generating a list of files for a given set of user supplied
     query parameters.
     '''
+
+    datetime_format = '%Y-%m-%d %H:%M:%S'
+    
     def __init__(self, database) :
         '''
         Catalog initialization: DATABASE is a Database driver
@@ -395,9 +398,9 @@ class Catalog :
         self.fileset = self.db.query(SQL.fileset % fileset)[0]
         # validate timespec
         if timespec :
-            self.datetime = datetime.isoformat(datetime.strptime(timespec, '%Y-%m-%d %H:%M:%S'))
+            self.datetime = datetime.strftime(datetime.strptime(timespec, Catalog.datetime_format), Catalog.datetime_format)
         else :
-            self.datetime = str(datetime.now())
+            self.datetime = datetime.strftime(datetime.now(), Catalog.datetime_format)
         # create temporary tables
         self.db.query(SQL.create_temp)
         self.db.query(SQL.create_temp1)
@@ -466,7 +469,9 @@ class FileSystem(Fuse) :
 
     fuse_stat_fields = dir(fuse.Stat())
 
+    xattr_prefix = 'user.baculafs.'
     xattr_fields = ['FileIndex', 'JobId', 'LStat', 'MD5']
+    xattr_fields_root = ['client', 'fileset', 'datetime', 'joblist', 'cache_prefix']
 
     def __init__(self, *args, **kw):
         '''
@@ -743,6 +748,7 @@ class FileSystem(Fuse) :
         self.catalog = Catalog(self.db)
         self.base64 = Base64()
         files = self.catalog.query(self.client, self.fileset, self.datetime, self.recent_job, self.joblist)
+        self.datetime = self.catalog.datetime # validated 
         # we don't need the database anymore
         self.db = None 
 
@@ -808,7 +814,8 @@ class FileSystem(Fuse) :
             print "Prefetching %d objects ... " % npf
             self._extract(prefetches)
         print 'Cache directory is: %s' % self.cache_prefix
-        print 'Jobs in file system: %s' % [job[0] for job in self.catalog.jobs]
+        self.joblist = ' '.join([str(job[0]) for job in self.catalog.jobs])
+        print 'Jobs in file system: %s' % self.joblist
         print "BaculaFS ready (%d files)." % len(files)
 
     def getxattr(self, path, name, size):
@@ -818,10 +825,12 @@ class FileSystem(Fuse) :
             if len(self.dirs[head][tail]) == 1 :
                 return -errno.ENODATA
             else :
-                n = name.replace('user.baculafs.', '')
+                n = name.replace(FileSystem.xattr_prefix, '')
                 if n in FileSystem.xattr_fields :
                     val = str(self.dirs[head][tail][FileSystem.xattr_fields.index(n)])
-                else :
+                elif path == '/' and n in FileSystem.xattr_fields_root :
+                    val = str(getattr(self, n))
+                else :    
                     return -errno.ENODATA
                 if size == 0:
                     # We are asked for size of the value.
@@ -837,7 +846,9 @@ class FileSystem(Fuse) :
             if len(self.dirs[head][tail]) == 1 :
                 return -errno.ENODATA
             else :
-                xattrs = ['user.baculafs.' + a for a in FileSystem.xattr_fields]
+                xattrs = [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields]
+                if path == '/' :
+                    xattrs = [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields_root] + xattrs
             if size == 0:
                 # We are asked for size of the attr list, ie. joint size of attrs
                 # plus null separators.
