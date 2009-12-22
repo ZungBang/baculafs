@@ -580,10 +580,24 @@ class FileSystem(Fuse) :
         '''
         items = []
         realpath_list = []
+        hardlink_targets = []
         
         for path in path_list :
             realpath, symlinkinfo, volumes = self._find_volumes(path)
             realpath_list.append(realpath)
+            if volumes :
+                items.append((symlinkinfo, volumes))
+                # collect hard link targets
+                hardlink_target = self._hardlink_target(path)
+                if (hardlink_target and
+                    hardlink_target not in path_list and
+                    hardlink_target not in hardlink_targets) :
+                    hardlink_targets.append(hardlink_target)
+
+        # add hardlink targets to list
+        # bextract will fail to extract the hardlink if its target does not exist
+        for path in hardlink_targets :
+            realpath, symlinkinfo, volumes = self._find_volumes(path)
             if volumes :
                 items.append((symlinkinfo, volumes))
 
@@ -603,7 +617,23 @@ class FileSystem(Fuse) :
 
         return realpath_list
     
-
+    def _hardlink_target(self, path) :
+        '''
+        return hard link target of path if it is a hard link
+        '''
+        head, tail = os.path.split(path)
+        if not head.endswith('/') :
+            head = head + '/'
+        bs = self.dirs[head][tail][-2]
+        jobid = self.dirs[head][tail][1]
+        if bs['st_nlink'] > 1 and bs['st_linkfi'] > 0 :
+            st_linkfi = bs['st_linkfi']
+            for file in self.catalog.files :
+                if jobid == file[3] and st_linkfi == file[2] :
+                    hardlink_target = ('/' if not file[0].startswith('/') else '')+file[0]+file[1]
+                    return hardlink_target
+        return None        
+    
     def _find_volumes(self, path) :
         '''
         return list of volumes that contain path to be extracted, 
@@ -624,7 +654,7 @@ class FileSystem(Fuse) :
         if len(self.dirs[head][tail]) == 1 :
             raise RuntimeError, 'incomplete entry for path %s' % path
         # return if file has already been extracted
-        bs = self.dirs[head][tail][-1]
+        bs = self.getattr(path)
         is_symlink = stat.S_ISLNK(bs.st_mode)
         found = False
         if os.path.exists(realpath) or os.path.lexists(realpath) :
