@@ -5,9 +5,9 @@ TODO
 - use bacula-dir.conf to extract database connection info ?
 - use python's logging facility for debug messages
 - add support for other database drivers
-- package (with easy install?)
 - add option to clear cache on umount
    
++ package (with easy install?)
 + allow full filesystem caching (useful for initial rsync)
 + for each query check that we get a result and that it has the
   expected number of rows

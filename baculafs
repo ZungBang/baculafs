@@ -961,10 +961,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
 """ + Fuse.fusage
 
-    bacula_version = bextract_version()
-    if not bacula_version :
-        raise fuse.FuseError('cannot determine Bacula bextract version - is it installed?')
-    
+    bacula_version = bextract_version() 
+
     server = FileSystem(version="BaculaFS version: %s\nbextract version: %s\nPython FUSE version: %s" % (__version__, bacula_version, fuse.__version__), usage=usage)
 
     server.multithreaded = False
@@ -1020,7 +1018,10 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
     try:
         if server.fuse_args.mount_expected() :
-            server.initialize()
+            if not bacula_version :
+                raise fuse.FuseError('cannot determine Bacula bextract version - is it installed?')
+            else :
+                server.initialize()
     except :
         traceback.print_exc()
         sys.exit(1)
