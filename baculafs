@@ -448,7 +448,7 @@ class Catalog :
 
 class FileSystem(Fuse) :
 
-    null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2)
+    null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2, st_ino = -1)
 
     bacula_stat_fields = ['st_dev',
                           'st_ino',
@@ -850,6 +850,13 @@ class FileSystem(Fuse) :
         print "BaculaFS ready (%d files)." % len(files)
 
     def getxattr(self, path, name, size):
+        '''
+        get value of extended attribute
+        baculafs exposes some filesystem attributes for the root directory
+        (e.g. joblist, cache_prefix - see FileSystem.xattr_fields_root)
+        and several other attributes for each file/directory that appears
+        in the catalog (e.g. MD5, JobId - see FileSystem.xattr_fields)
+        '''
         head, tail = self._split(path)
         val = None
         n = name.replace(FileSystem.xattr_prefix, '')
@@ -868,6 +875,9 @@ class FileSystem(Fuse) :
         return val
 
     def listxattr(self, path, size):
+        '''
+        list extended attributes
+        '''
         head, tail = self._split(path)
         xattrs = []
         if path == '/' :
@@ -912,12 +922,22 @@ class FileSystem(Fuse) :
             return -errno.ENOENT
     
     def readdir(self, path, offset):
+        '''
+        read directory entries
+        '''
         path = path if path.endswith('/') else path+'/'
-        for key in ['.','..']+self.dirs[path].keys() :
+        for key in ['.','..'] :
+            yield fuse.Direntry(key)
+        for key in self.dirs[path].keys() :
             if len(key) > 0:
-                yield fuse.Direntry(key)
+                bs = self.getattr(path + key)
+                ino = bs.st_ino
+                yield fuse.Direntry(key, ino=ino)
             
     def readlink(self, path):
+        '''
+        read link contents
+        '''
         realpath = self._extract([path])[0]
         if realpath :
             link = os.readlink(realpath)
