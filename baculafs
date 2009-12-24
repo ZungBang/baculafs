@@ -514,6 +514,14 @@ class FileSystem(Fuse) :
 
         Fuse.__init__(self, *args, **kw)
 
+    def _split(self, path) :
+        '''
+        os.path.split wrapper
+        '''
+        head, tail = os.path.split(path)
+        if head and not head.endswith('/') :
+            head += '/'
+        return head, tail
 
     def _bacula_stat(self, base64) :
         '''
@@ -563,15 +571,14 @@ class FileSystem(Fuse) :
         '''
         add parent directories of path to dirs dictionary
         '''
-        head, tail = os.path.split(path[:-1])
+        head, tail = self._split(path[:-1])
         if not head or head == path:
             return
-        head_dir = head if head.endswith('/') else head+'/'
-        if not head_dir in self.dirs :
-            self.dirs[head_dir] = { tail: (FileSystem.null_stat,) }
-        elif not tail in self.dirs[head_dir] :
-            self.dirs[head_dir][tail] = (FileSystem.null_stat,)
-        self._add_parent_dirs(head_dir)
+        if not head in self.dirs :
+            self.dirs[head] = { tail: (FileSystem.null_stat,) }
+        elif not tail in self.dirs[head] :
+            self.dirs[head][tail] = (FileSystem.null_stat,)
+        self._add_parent_dirs(head)
 
     
     def _extract(self, path_list) :
@@ -621,9 +628,7 @@ class FileSystem(Fuse) :
         '''
         return hard link target of path if it is a hard link
         '''
-        head, tail = os.path.split(path)
-        if not head.endswith('/') :
-            head = head + '/'
+        head, tail = self._split(path)
         bs = self.dirs[head][tail][-2]
         jobid = self.dirs[head][tail][1]
         if bs['st_nlink'] > 1 and bs['st_linkfi'] > 0 :
@@ -641,13 +646,11 @@ class FileSystem(Fuse) :
         '''
         realpath = os.path.normpath(self.cache_path + path)
         symlinkpath = os.path.normpath(self.cache_symlinks + path)
-        head, tail = os.path.split(path)
+        head, tail = self._split(path)
         # sanity check: path should not be a directory
-        if head == tail or tail == '':
+        if tail == '':
             raise RuntimeError, 'trying to extract a directory %s' % path
         # check that path exists in catalog
-        if not head.endswith('/') :
-            head = head + '/'
         if head not in self.dirs or tail not in self.dirs[head] :
             return None, None, None
         # sanity check: path entry is incomplete
@@ -832,10 +835,8 @@ class FileSystem(Fuse) :
             # add parent directories
             self._add_parent_dirs(head)
             # directories are added to their parents
-            if tail == '' :
-                head, tail = os.path.split(head[:-1])
-                if not head.endswith('/') :
-                    head += '/'
+            if head != '/' and tail == '' :
+                head, tail = self._split(head[:-1])
             # and finally
             self.dirs[head][tail] = entry
 
@@ -849,43 +850,36 @@ class FileSystem(Fuse) :
         print "BaculaFS ready (%d files)." % len(files)
 
     def getxattr(self, path, name, size):
-        head, tail = os.path.split(path)
-        head = head if head.endswith('/') else head+'/'
-        if head in self.dirs and tail in self.dirs[head] :
-            if len(self.dirs[head][tail]) == 1 :
-                return -errno.ENODATA
-            else :
-                n = name.replace(FileSystem.xattr_prefix, '')
-                if n in FileSystem.xattr_fields :
-                    val = str(self.dirs[head][tail][FileSystem.xattr_fields.index(n)])
-                elif path == '/' and n in FileSystem.xattr_fields_root :
-                    val = str(getattr(self, n))
-                else :    
-                    return -errno.ENODATA
-                if size == 0:
-                    # We are asked for size of the value.
-                    return len(val)
-                return val
-        else :
-            return -errno.ENOENT
+        head, tail = self._split(path)
+        val = None
+        n = name.replace(FileSystem.xattr_prefix, '')
+        if path == '/' and n in FileSystem.xattr_fields_root :
+            val = str(getattr(self, n))
+        elif (head in self.dirs and tail in self.dirs[head] and
+              len(self.dirs[head][tail]) != 1 and
+              n in FileSystem.xattr_fields) :
+            val = str(self.dirs[head][tail][FileSystem.xattr_fields.index(n)])
+        # attribute not found
+        if val == None :
+            return -errno.ENODATA
+        # We are asked for size of the value.
+        if size == 0:
+            return len(val)
+        return val
 
     def listxattr(self, path, size):
-        head, tail = os.path.split(path)
-        head = head if head.endswith('/') else head+'/'
-        if head in self.dirs and tail in self.dirs[head] :
-            if len(self.dirs[head][tail]) == 1 :
-                return -errno.ENODATA
-            else :
-                xattrs = [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields]
-                if path == '/' :
-                    xattrs = [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields_root] + xattrs
-            if size == 0:
-                # We are asked for size of the attr list, ie. joint size of attrs
-                # plus null separators.
-                return len("".join(xattrs)) + len(xattrs)
-            return xattrs
-        else:
-            return -errno.ENOENT
+        head, tail = self._split(path)
+        xattrs = []
+        if path == '/' :
+            xattrs += [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields_root]
+        if (head in self.dirs and tail in self.dirs[head] and 
+            len(self.dirs[head][tail]) != 1) :
+            xattrs += [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields]
+        # We are asked for size of the attr list, ie. joint size of attrs
+        # plus null separators.
+        if size == 0:
+            return len("".join(xattrs)) + len(xattrs)
+        return xattrs
 
     def getattr(self, path):
         '''
@@ -899,8 +893,7 @@ class FileSystem(Fuse) :
            needed and then cached for subsequent requests.
         3) python fuse expects atime/ctime/mtime to be positive
         '''
-        head, tail = os.path.split(path)
-        head = head if head.endswith('/') else head+'/'
+        head, tail = self._split(path)
         if head in self.dirs and tail in self.dirs[head] :
             attrs = self.dirs[head][tail][-1]
             # decode and cache stat info
