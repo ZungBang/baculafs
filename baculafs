@@ -90,6 +90,11 @@ class SQL :
     Adapted from Bacula source code.
     '''
 
+    MYSQL = 'mysql'
+    POSTGRESQL = 'postgresql'
+    SQLITE = 'sqlite'
+    SQLITE3 = 'sqlite3'
+    
     clients = 'SELECT Client.Name,ClientId FROM Client'
     
     filesets = '''
@@ -101,10 +106,11 @@ class SQL :
 
     fileset = '''
     SELECT FileSetId,FileSet,MD5,CreateTime FROM FileSet
-    WHERE FileSet="%s" ORDER BY CreateTime DESC LIMIT 1
+    WHERE FileSet='%s' ORDER BY CreateTime DESC LIMIT 1
     '''
 
-    create_temp = '''
+    create_temp = {
+        MYSQL: '''
     CREATE TEMPORARY TABLE temp (
     JobId INTEGER UNSIGNED NOT NULL,
     JobTDate BIGINT UNSIGNED,
@@ -117,13 +123,77 @@ class SQL :
     StartFile INTEGER UNSIGNED,
     VolSessionId INTEGER UNSIGNED,
     VolSessionTime INTEGER UNSIGNED)
-    '''
+    ''',
+        
+        POSTGRESQL: '''
+    CREATE TEMPORARY TABLE temp (
+    JobId INTEGER NOT NULL,
+    JobTDate BIGINT,
+    ClientId INTEGER,
+    Level CHAR,
+    JobFiles INTEGER,
+    JobBytes BIGINT,
+    StartTime TEXT,
+    VolumeName TEXT,
+    StartFile INTEGER,
+    VolSessionId INTEGER,
+    VolSessionTime INTEGER)
+    ''',
+        
+        SQLITE: '''
+    CREATE TEMPORARY TABLE temp (
+    JobId INTEGER UNSIGNED NOT NULL,
+    JobTDate BIGINT UNSIGNED,
+    ClientId INTEGER UNSIGNED,
+    Level CHAR,
+    JobFiles INTEGER UNSIGNED,
+    JobBytes BIGINT UNSIGNED,
+    StartTime TEXT,
+    VolumeName TEXT,
+    StartFile INTEGER UNSIGNED,
+    VolSessionId INTEGER UNSIGNED,
+    VolSessionTime INTEGER UNSIGNED)
+    ''',
+        
+        SQLITE3: '''
+    CREATE TEMPORARY TABLE temp (
+    JobId INTEGER UNSIGNED NOT NULL,
+    JobTDate BIGINT UNSIGNED,
+    ClientId INTEGER UNSIGNED,
+    Level CHAR,
+    JobFiles INTEGER UNSIGNED,
+    JobBytes BIGINT UNSIGNED,
+    StartTime TEXT,
+    VolumeName TEXT,
+    StartFile INTEGER UNSIGNED,
+    VolSessionId INTEGER UNSIGNED,
+    VolSessionTime INTEGER UNSIGNED)
+    ''' }
 
-    create_temp1 = '''
+    create_temp1 = {
+        MYSQL: '''
     CREATE TEMPORARY TABLE temp1 (
     JobId INTEGER UNSIGNED NOT NULL,
     JobTDate BIGINT UNSIGNED)
-    '''
+    ''',
+        
+        POSTGRESQL: '''
+    CREATE TEMPORARY TABLE temp1 (
+    JobId INTEGER NOT NULL,
+    JobTDate BIGINT)
+    ''',
+        
+        SQLITE: '''
+    CREATE TEMPORARY TABLE temp1 (
+    JobId INTEGER UNSIGNED NOT NULL,
+    JobTDate BIGINT UNSIGNED)
+    ''',
+        
+        SQLITE3: '''
+    CREATE TEMPORARY TABLE temp1 (
+    JobId INTEGER UNSIGNED NOT NULL,
+    JobTDate BIGINT UNSIGNED)
+    ''' }
 
     temp  = 'SELECT * FROM temp'
 
@@ -137,13 +207,13 @@ class SQL :
     INSERT INTO temp1 SELECT Job.JobId,JobTdate 
     FROM Client,Job,JobMedia,Media,FileSet WHERE Client.ClientId=%s
     AND Job.ClientId=%s
-    AND Job.StartTime < DATETIME("%s")
+    AND Job.StartTime < '%s'
     AND Level='F' AND JobStatus IN ('T','W') AND Type='B' 
     AND JobMedia.JobId=Job.JobId 
     AND Media.Enabled=1 
     AND JobMedia.MediaId=Media.MediaId 
     AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet="%s"
+    AND FileSet.FileSet='%s'
     ORDER BY Job.JobTDate DESC LIMIT 1
     '''
 
@@ -164,14 +234,14 @@ class SQL :
     Job.StartTime,Media.VolumeName,JobMedia.StartFile,
     Job.VolSessionId,Job.VolSessionTime 
     FROM Job,JobMedia,Media,FileSet 
-    WHERE Job.JobTDate>%d AND Job.StartTime<DATETIME("%s")
+    WHERE Job.JobTDate>%d AND Job.StartTime<'%s'
     AND Job.ClientId=%d 
     AND JobMedia.JobId=Job.JobId 
     AND Media.Enabled=1 
     AND JobMedia.MediaId=Media.MediaId 
     AND Job.Level='D' AND JobStatus IN ('T','W') AND Type='B' 
     AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet="%s"
+    AND FileSet.FileSet='%s'
     ORDER BY Job.JobTDate DESC LIMIT 1
     '''
 
@@ -181,14 +251,14 @@ class SQL :
     Job.StartTime,Media.VolumeName,JobMedia.StartFile,
     Job.VolSessionId,Job.VolSessionTime 
     FROM Job,JobMedia,Media,FileSet 
-    WHERE Job.JobTDate>%d AND Job.StartTime<DATETIME("%s") 
+    WHERE Job.JobTDate>%d AND Job.StartTime<'%s' 
     AND Job.ClientId=%d
     AND Media.Enabled=1 
     AND JobMedia.JobId=Job.JobId 
     AND JobMedia.MediaId=Media.MediaId 
     AND Job.Level='I' AND JobStatus IN ('T','W') AND Type='B' 
     AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet="%s"
+    AND FileSet.FileSet='%s'
     '''
 
     selected_jobs_temp = '''
@@ -204,7 +274,7 @@ class SQL :
     AND JobMedia.MediaId=Media.MediaId 
     AND JobStatus IN ('T','W') AND Type='B' 
     AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet="%s"
+    AND FileSet.FileSet='%s'
     '''
 
     jobs = 'SELECT DISTINCT JobId,StartTime FROM temp ORDER BY StartTime ASC'
@@ -229,31 +299,101 @@ class SQL :
     ORDER BY Temp.JobId, FileIndex ASC
     '''
 
-    with_basejobs = '''
-    SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
-           File.FilenameId AS FilenameId, LStat, MD5 
-    FROM Job, File, ( 
-        SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
-          FROM ( 
-            SELECT JobTDate, PathId, FilenameId 
-              FROM File JOIN Job USING (JobId) 
-             WHERE File.JobId IN (%s) 
-              UNION ALL 
-            SELECT JobTDate, PathId, FilenameId 
-              FROM BaseFiles 
-                   JOIN File USING (FileId) 
-                   JOIN Job  ON    (BaseJobId = Job.JobId) 
-             WHERE BaseFiles.JobId IN (%s) 
-           ) AS tmp GROUP BY PathId, FilenameId 
-        ) AS T1 
-    WHERE (Job.JobId IN ( 
+    with_basejobs = {
+        MYSQL: '''
+     SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
+            File.FilenameId AS FilenameId, LStat, MD5 
+     FROM Job, File, ( 
+         SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
+           FROM ( 
+             SELECT JobTDate, PathId, FilenameId 
+               FROM File JOIN Job USING (JobId) 
+              WHERE File.JobId IN (%s) 
+               UNION ALL 
+             SELECT JobTDate, PathId, FilenameId 
+               FROM BaseFiles 
+                    JOIN File USING (FileId) 
+                    JOIN Job  ON    (BaseJobId = Job.JobId) 
+              WHERE BaseFiles.JobId IN (%s) 
+            ) AS tmp GROUP BY PathId, FilenameId 
+         ) AS T1 
+     WHERE (Job.JobId IN ( 
              SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
+             OR Job.JobId IN (%s)) 
+       AND T1.JobTDate = Job.JobTDate 
+       AND Job.JobId = File.JobId 
+       AND T1.PathId = File.PathId 
+       AND T1.FilenameId = File.FilenameId
+     ''',
+        
+        POSTGRESQL: '''
+      SELECT DISTINCT ON (FilenameId, PathId) StartTime, JobId, FileId, 
+              FileIndex, PathId, FilenameId, LStat, MD5 
+        FROM 
+            (SELECT FileId, JobId, PathId, FilenameId, FileIndex, LStat, MD5 
+               FROM File WHERE JobId IN (%s) 
+              UNION ALL 
+             SELECT File.FileId, File.JobId, PathId, FilenameId, 
+                    File.FileIndex, LStat, MD5 
+               FROM BaseFiles JOIN File USING (FileId) 
+              WHERE BaseFiles.JobId IN (%s) 
+             ) AS T JOIN Job USING (JobId) 
+        ORDER BY FilenameId, PathId, StartTime DESC
+        -- dummy comment for chomping extra parameter: %s
+        -- dummy comment for chomping extra parameter: %s
+     ''',
+        
+        SQLITE: '''
+     SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
+            File.FilenameId AS FilenameId, LStat, MD5 
+     FROM Job, File, ( 
+         SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
+           FROM ( 
+             SELECT JobTDate, PathId, FilenameId 
+               FROM File JOIN Job USING (JobId) 
+              WHERE File.JobId IN (%s) 
+               UNION ALL 
+             SELECT JobTDate, PathId, FilenameId 
+               FROM BaseFiles 
+                    JOIN File USING (FileId) 
+                    JOIN Job  ON    (BaseJobId = Job.JobId) 
+              WHERE BaseFiles.JobId IN (%s) 
+            ) AS tmp GROUP BY PathId, FilenameId 
+         ) AS T1 
+     WHERE (Job.JobId IN ( 
+            SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
             OR Job.JobId IN (%s)) 
-      AND T1.JobTDate = Job.JobTDate 
-      AND Job.JobId = File.JobId 
-      AND T1.PathId = File.PathId 
-      AND T1.FilenameId = File.FilenameId
-    '''
+       AND T1.JobTDate = Job.JobTDate 
+       AND Job.JobId = File.JobId 
+       AND T1.PathId = File.PathId 
+       AND T1.FilenameId = File.FilenameId
+     ''',
+        
+        SQLITE3: '''
+     SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
+            File.FilenameId AS FilenameId, LStat, MD5 
+     FROM Job, File, ( 
+         SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
+           FROM ( 
+             SELECT JobTDate, PathId, FilenameId 
+               FROM File JOIN Job USING (JobId) 
+              WHERE File.JobId IN (%s) 
+               UNION ALL 
+             SELECT JobTDate, PathId, FilenameId 
+               FROM BaseFiles 
+                    JOIN File USING (FileId) 
+                    JOIN Job  ON    (BaseJobId = Job.JobId) 
+              WHERE BaseFiles.JobId IN (%s) 
+            ) AS tmp GROUP BY PathId, FilenameId 
+         ) AS T1 
+     WHERE (Job.JobId IN ( 
+              SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
+             OR Job.JobId IN (%s)) 
+       AND T1.JobTDate = Job.JobTDate 
+       AND Job.JobId = File.JobId 
+       AND T1.PathId = File.PathId 
+       AND T1.FilenameId = File.FilenameId
+    ''' }
 
     job_records = '''
     SELECT JobId,VolSessionId,VolSessionTime,
@@ -312,7 +452,15 @@ class Database :
     This class shields the rest of the code from the pesky details of
     actually accessing one of the supported databases.
     '''
-    def __init__(self, driver, database, username, password, trace) :
+
+    default_database = {
+        SQL.MYSQL: 'bacula',
+        SQL.POSTGRESQL: 'bacula',
+        SQL.SQLITE: '/var/lib/bacula/bacula.db',
+        SQL.SQLITE3: '/var/lib/bacula/bacula.db'
+        }
+    
+    def __init__(self, driver, host, port, database, username, password, trace) :
         '''
         Initialize database driver: connect the database,
         create connection and cusror objects.
@@ -320,16 +468,31 @@ class Database :
         self.trace = trace
         self.connection = None
         self.cursor = None
-        if driver == 'sqlite3' :
+        self.driver = driver
+        if not database :
+            database = Database.default_database[self.driver]
+        if self.driver == SQL.MYSQL :
+            from MySQLdb import connect
+            self.connection = connect(host=host, port=port, user=username, passwd=password, db=database)
+        elif self.driver == SQL.POSTGRESQL :
+            from psycopg2 import connect
+            self.connection = connect(host=host, port=port, user=username, password=password, database=database)
+        elif self.driver == SQL.SQLITE :
+            from sqlite import connect
+            database = os.path.expanduser(database)
+            if not os.path.isfile(database) or not os.access(database, os.R_OK) :
+                raise RuntimeError, 'cannot read from file %s' % database
+            self.connection = connect(database)
+        elif self.driver == SQL.SQLITE3 :
             from sqlite3 import connect
             database = os.path.expanduser(database)
             if not os.path.isfile(database) or not os.access(database, os.R_OK) :
                 raise RuntimeError, 'cannot read from file %s' % database
             self.connection = connect(database)
             self.connection.text_factory = str # fixes sqlite3.OperationalError: Could not decode to UTF-8
-            self.cursor = self.connection.cursor()
         else :
-            raise ValueError, 'driver %s not supported yet.' % driver
+            raise ValueError, 'unknown database driver %s.' % self.driver
+        self.cursor = self.connection.cursor()
 
     def __del__(self) :
         '''
@@ -340,15 +503,15 @@ class Database :
         if self.connection :
             self.connection.close()
 
-    def query(self, sql) :
+    def query(self, sql, fetch = True) :
         '''
         Execute SQL and fetch all results
         '''
         if self.trace :
             print sql
         self.cursor.execute(sql)
-        return self.cursor.fetchall()
-        
+        if fetch :
+            return self.cursor.fetchall()
     
     
 class Catalog :
@@ -384,6 +547,8 @@ class Catalog :
         '''
         # validate client
         self.clients = dict(self.db.query(SQL.clients))
+        if len(self.clients) == 1 and not client :
+            client = self.clients.keys()[0]
         if client not in self.clients :
             raise ValueError, 'client must be one of %s' % self.clients.keys()
         self.client_id = self.clients[client]
@@ -402,24 +567,24 @@ class Catalog :
         else :
             self.datetime = datetime.strftime(datetime.now(), Catalog.datetime_format)
         # create temporary tables
-        self.db.query(SQL.create_temp)
-        self.db.query(SQL.create_temp1)
+        self.db.query(SQL.create_temp[self.db.driver], fetch=False)
+        self.db.query(SQL.create_temp1[self.db.driver], fetch=False)
         # get list of jobs
         if joblist :
             # select from specific jobs
             self.joblist = ','.join(list(set([str(int(s.strip())) for s in joblist.split()])))
-            self.db.query(SQL.selected_jobs_temp % (self.joblist, self.client_id, self.fileset[1]))
+            self.db.query(SQL.selected_jobs_temp % (self.joblist, self.client_id, self.fileset[1]), fetch=False)
         else :
             # select backup before specified datetime
             self.db.query(SQL.full_jobs_temp1 %
-                          (self.client_id, self.client_id, self.datetime, self.fileset[1]))
-            self.db.query(SQL.full_jobs_temp)
+                          (self.client_id, self.client_id, self.datetime, self.fileset[1]), fetch=False)
+            self.db.query(SQL.full_jobs_temp, fetch=False)
             full_jobs = self.db.query(SQL.temp1)
             if len(full_jobs) == 0 :
                 raise RuntimeError, 'no full jobs found'
-            self.db.query(SQL.diff_jobs_temp % (full_jobs[0][1], self.datetime, self.client_id, self.fileset[1]))
+            self.db.query(SQL.diff_jobs_temp % (full_jobs[0][1], self.datetime, self.client_id, self.fileset[1]), fetch=False)
             diff_jobs = self.db.query(SQL.temp)
-            self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]))
+            self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]), fetch=False)
         jobs = self.db.query(SQL.jobs)
         self.most_recent_jobid = jobs[-1][0] if len(jobs) > 1 else -1
         # select files from the most recent job only
@@ -438,10 +603,10 @@ class Catalog :
         # get relevant volume records
         self.volumes = self.db.query(SQL.volumes % all_jobs_csl)
         # get files
-        self.files = self.db.query(SQL.files % (SQL.with_basejobs % (jobs_csl, jobs_csl, jobs_csl, jobs_csl)))
+        self.files = self.db.query(SQL.files % (SQL.with_basejobs[self.db.driver] % (jobs_csl, jobs_csl, jobs_csl, jobs_csl)))
         # delete temporary tables
-        self.db.query(SQL.del_temp)
-        self.db.query(SQL.del_temp1)
+        self.db.query(SQL.del_temp, fetch=False)
+        self.db.query(SQL.del_temp1, fetch=False)
 
         return self.files
 
@@ -481,8 +646,8 @@ class FileSystem(Fuse) :
         # default option values
         self.trace = False
         self.driver = 'sqlite3'
-        self.database = '/var/lib/bacula/bacula.db'
-        self.address = 'localhost'
+        self.database = None
+        self.host = 'localhost'
         self.port = 0
         self.username = 'bacula'
         self.password = ''
@@ -774,6 +939,8 @@ class FileSystem(Fuse) :
         makedirs(self.cache_symlinks)
         self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
         self.db = Database(self.driver,
+                           self.host,
+                           self.port,
                            self.database,
                            self.username,
                            self.password,
@@ -982,12 +1149,12 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
     server.parser.add_option(mountopt="driver", metavar="DRIVER", default=server.driver,
                              help="database driver [default: %default]")
-    server.parser.add_option(mountopt="address", metavar="SERVER", default=server.address,
+    server.parser.add_option(mountopt="host", metavar="HOST", default=server.host,
                              help="database server address [default: %default]")
     server.parser.add_option(mountopt="port", metavar="PORT", default=server.port, type="int",
                              help="database server port")
     server.parser.add_option(mountopt="database", metavar="PATH", default=server.database,
-                             help="database name [default: %default]")
+                             help="database name [default: bacula]")
     server.parser.add_option(mountopt="username", metavar="USERNAME", default=server.username,
                              help="database user name [default: %default]")
     server.parser.add_option(mountopt="password", metavar="PASSWORD", default=server.password,

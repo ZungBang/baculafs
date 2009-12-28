@@ -1,12 +1,10 @@
 TODO
 ----
-- db locking? how to prevent bacula from writing to the database?
-  can this be done at all?
-- use bacula-dir.conf to extract database connection info ?
 - use python's logging facility for debug messages
-- add support for other database drivers
 - add option to clear cache on umount
+- complete packaging, add license(s), publish project
    
++ add support for other database drivers
 + package (with easy install?)
 + allow full filesystem caching (useful for initial rsync)
 + for each query check that we get a result and that it has the
@@ -18,8 +16,14 @@ TODO
 + parse file stat info
 + allow any date    
 
++ [CANCELLED] db locking? how to prevent bacula from writing to the database?
+  can this be done at all?
+  (this is a mainatinance tool - stop the director if you want to
+   avoid conflicts for sure)
++ [CANCELLED] use bacula-dir.conf to extract database connection info ?
+   (does not contain driver - may not be available at sd)
 + [CANCELLED] optimize bsr (sort and group files)
-   bextract seems to do it already
+   (bextract seems to do it already)
 + [CANCELLED] allow specifying volume id? (like in ua_restore code)
    (why?)
 + [CANCELLED] handle acl in job selection
