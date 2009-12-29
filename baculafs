@@ -9,6 +9,7 @@ import tempfile
 import pexpect
 import time
 import re
+import shutil
 from datetime import datetime, timedelta
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
@@ -660,6 +661,7 @@ class FileSystem(Fuse) :
         self.recent_job = False
         self.joblist = None
         self.user_cache_path = None
+        self.cleanup = False
         self.move_root = False
         self.notify = False
         self.pynotify = None
@@ -1113,6 +1115,15 @@ class FileSystem(Fuse) :
             return link
         return -errno.ENOENT
 
+    def fsdestroy(self) :
+        '''
+        remove cache directory if required
+        '''
+        if self.cleanup and not self.user_cache_path :
+            if self.trace :
+                print 'removing cache directory: %s' % self.cache_prefix
+            shutil.rmtree(self.cache_prefix, ignore_errors = True)
+    
     class _File(object) :
         def __init__(self, fs, path, flags, *mode) :
             self.fs = fs
@@ -1173,6 +1184,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="select contents of most recent job only [default: %default]") 
     server.parser.add_option(mountopt="joblist", metavar="'JOBID1 JOBID2 ...'", default=server.joblist,
                              help="select contents of specified list of jobs") 
+    server.parser.add_option(mountopt="cleanup", action="store_true", default=server.cleanup,
+                             help="clean cache directory upon umount  [default: %default]")
     server.parser.add_option(mountopt="move_root", action="store_true", default=server.move_root,
                              help="make absolute path symlinks point to path under mount point  [default: %default]")
     server.parser.add_option(mountopt="prefetch_attrs", action="store_true", default=server.prefetch_symlinks,

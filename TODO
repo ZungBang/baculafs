@@ -1,9 +1,9 @@
 TODO
 ----
 - use python's logging facility for debug messages
-- add option to clear cache on umount
 - complete packaging, add license(s), publish project
    
++ add option to clear cache on umount
 + add support for other database drivers
 + package (with easy install?)
 + allow full filesystem caching (useful for initial rsync)
