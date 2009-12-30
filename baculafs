@@ -11,6 +11,7 @@ import time
 import re
 import shutil
 import threading
+import copy
 from datetime import datetime, timedelta
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
@@ -641,7 +642,13 @@ class FileSystem(Fuse) :
     xattr_prefix = 'user.baculafs.'
     xattr_fields = ['FileIndex', 'JobId', 'LStat', 'MD5']
     xattr_fields_root = ['client', 'fileset', 'datetime', 'joblist', 'cache_prefix']
-
+    xattr_fields_bextract = ['path', 'volume', 'retries', 'state', 'pending', 'failures']
+    
+    bextract_done = {'path': None,
+                     'volume': None,
+                     'retries': 0,
+                     'state': 'idle'}
+    
     def __init__(self, *args, **kw):
         '''
         Initialize filesystem
@@ -649,6 +656,10 @@ class FileSystem(Fuse) :
         
         self._extract_lock = threading.Lock()
         self._getattr_lock = threading.Lock()
+        self._bextract_status_lock = threading.Lock()
+        self._bextract_user_intervention_event = threading.Event()
+
+        self._initialized = False
         
         # default option values
         self.trace = False
@@ -662,22 +673,22 @@ class FileSystem(Fuse) :
         self.client = ''
         self.fileset = None
         self.device = 'FileStorage'
-        self.retry_interval = 5*60
         self.datetime = None
         self.recent_job = False
         self.joblist = None
         self.user_cache_path = None
         self.cleanup = False
         self.move_root = False
-        self.notify = False
-        self.pynotify = None
-        self.notification = None
         self.prefetch_attrs = False
         self.prefetch_regex = None
         self.prefetch_symlinks = False
         self.prefetch_recent = False
         self.prefetch_everything = False
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
+
+        self._bextract_status = copy.deepcopy(FileSystem.bextract_done)
+        self._bextract_status['pending'] = 0
+        self._bextract_status['failures'] = 0
 
         class File (FileSystem._File):
             def __init__(self2, *a, **kw):
@@ -709,37 +720,6 @@ class FileSystem(Fuse) :
                 setattr(st, k, lst[k])
         return lst, st
 
-    def _notify(self, message, timeout = -1, urgent = False) :
-        '''
-        Notify message to user
-        '''
-        if not self.notify :
-            print message
-            sys.stdout.flush()
-            return
-
-        if not self.notification :
-            try :
-                import pygtk
-                pygtk.require('2.0')
-                import pynotify
-                self.pynotify = pynotify
-            except :
-                self.notify = False
-                print message
-                return
-            self.pynotify.init("BaculaFS")
-            self.notification = self.pynotify.Notification("BaculaFS", message)
-        else :
-            self.notification.update("BaculaFS", message)
-
-        self.notification.set_timeout(timeout if timeout >= 0 else self.pynotify.EXPIRES_DEFAULT)
-        self.notification.set_urgency(self.pynotify.URGENCY_CRITICAL if urgent else self.pynotify.URGENCY_NORMAL)
-            
-        if not self.notification.show() :
-            self.notify = False
-            self.notification = None
-
     def _add_parent_dirs(self, path) :
         '''
         add parent directories of path to dirs dictionary
@@ -758,6 +738,10 @@ class FileSystem(Fuse) :
         '''
         extract path list from storage, returns path list of extracted files
         '''
+
+        nitems = len(path_list)
+        self._bextract_increment_counter('pending', nitems)
+        
         # serialize extractions
         self._extract_lock.acquire()
         
@@ -769,7 +753,7 @@ class FileSystem(Fuse) :
             realpath, symlinkinfo, volumes = self._find_volumes(path)
             realpath_list.append(realpath)
             if volumes :
-                items.append((symlinkinfo, volumes))
+                items.append((symlinkinfo, path, volumes))
                 # collect hard link targets
                 hardlink_target = self._hardlink_target(path)
                 if (hardlink_target and
@@ -782,7 +766,7 @@ class FileSystem(Fuse) :
         for path in hardlink_targets :
             realpath, symlinkinfo, volumes = self._find_volumes(path)
             if volumes :
-                items.append((symlinkinfo, volumes))
+                items.append((symlinkinfo, path, volumes))
 
         if len(items) > 0 :
             rc, sig = self._bextract(items)
@@ -799,6 +783,8 @@ class FileSystem(Fuse) :
                         touch(symlinkfile, symlinktime)
 
         self._extract_lock.release()
+        self._bextract_increment_counter('pending', -nitems)
+        
         return realpath_list
     
     def _hardlink_target(self, path) :
@@ -870,6 +856,33 @@ class FileSystem(Fuse) :
                        fileindex <= volume[4])]
         
         return realpath, (symlinkpath, bs.st_atime, bs.st_mtime) if is_symlink else None, volumes
+
+    def _bextract_set_status(self, status) :
+        '''
+        thread safe modification of bextract status dict
+        '''
+        self._bextract_status_lock.acquire()
+        for key in status :
+            self._bextract_status[key] = status[key]
+        self._bextract_status_lock.release()
+
+    def _bextract_increment_counter(self, counter, n) :
+        '''
+        thread safe modification of bextract counters
+        '''
+        self._bextract_status_lock.acquire()
+        self._bextract_status[counter] += n
+        self._bextract_status_lock.release()
+
+    def _bextract_get_status(self) :
+        '''
+        thread safe access to bextract status dict
+        '''
+        self._bextract_status_lock.acquire()
+        status = copy.deepcopy(self._bextract_status)
+        self._bextract_status_lock.release()
+        return status
+        
         
     def _bextract(self, items) :
         '''
@@ -879,6 +892,12 @@ class FileSystem(Fuse) :
         cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
         if self.trace :
             print cmd
+            
+        self._bextract_set_status({'path': items[0][1],
+                                   'volume': items[0][-1][0][0],
+                                   'retries': 0,
+                                   'state': 'run'})
+        
         child = pexpect.spawn(cmd)
         if self.trace :
             child.logfile = sys.stdout
@@ -894,25 +913,35 @@ class FileSystem(Fuse) :
                 # count retries
                 if missing == child.match.groups()[0] :
                     attempt += 1
+                    self._bextract_set_status({'retries': attempt,
+                                               'state': '*user intervention required*'})
                 else :
                     attempt = 1
                     missing = child.match.groups()[0]
-                # notify user
-                self._notify('\nPlease mount Volume "%s" on device "%s" %s\nRetry #%d scheduled for %s ...\n' %
-                             (missing,
-                              self.device,
-                              child.match.groups()[1],
-                              attempt,
-                              (datetime.now() + timedelta(seconds = self.retry_interval)).strftime('%F %T')),
-                             urgent = True,
-                             timeout = self.retry_interval)
-                # wait and retry
-                time.sleep(self.retry_interval)
+                    self._bextract_set_status({'volume': missing,
+                                               'retries': attempt,
+                                               'state': '*user intervention required*'})
+                # wait for user
+                if not self._initialized :
+                    if not self.trace :
+                        sys.stdout.write('Mount Volume "%s" on device "%s" %s and press return when ready: ' % 
+                                         (missing, self.device, child.match.groups()[1]))
+                        sys.stdout.flush()
+                    sys.stdin.read(1)
+                else :
+                    self._bextract_user_intervention_event.clear()
+                    self._bextract_user_intervention_event.wait()
+                    self._bextract_user_intervention_event.clear()                    
+                # retry
+                self._bextract_set_status({'state': 'run'})
                 child.sendline('')
             else :
                 child.close()
                 break
 
+        self._bextract_set_status(FileSystem.bextract_done)
+        if child.exitstatus or child.signalstatus :
+            self._bextract_increment_counter('failures', 1)
         return (child.exitstatus, child.signalstatus)
 
     def _write_bsr(self, items) :
@@ -1028,6 +1057,8 @@ class FileSystem(Fuse) :
         print 'Jobs in file system: %s' % self.joblist
         print "BaculaFS ready (%d files)." % len(files)
 
+        self._initialized = True
+
     def shutdown(self) :
         '''
         remove cache directory if required
@@ -1037,6 +1068,18 @@ class FileSystem(Fuse) :
                 print 'removing cache directory: %s' % self.cache_prefix
             shutil.rmtree(self.cache_prefix, ignore_errors = True)
         
+    def setxattr(self, path, name, value, flags):
+        '''
+        set value of extended attribute
+        we allow only setting user.baculafs.bextract.state on the root directory
+        '''
+        if (path == '/' and
+            name == FileSystem.xattr_prefix + 'bextract.state' and
+            value == 'run') :
+            self._bextract_user_intervention_event.set()
+        else :
+            return -errno.EOPNOTSUPP
+
     def getxattr(self, path, name, size):
         '''
         get value of extended attribute
@@ -1048,11 +1091,16 @@ class FileSystem(Fuse) :
         head, tail = self._split(path)
         val = None
         n = name.replace(FileSystem.xattr_prefix, '')
-        if path == '/' and n in FileSystem.xattr_fields_root :
-            val = str(getattr(self, n))
-        elif (head in self.dirs and tail in self.dirs[head] and
-              len(self.dirs[head][tail]) != 1 and
-              n in FileSystem.xattr_fields) :
+        if path == '/' :
+            if n in FileSystem.xattr_fields_root :
+                val = str(getattr(self, n))
+            elif n.startswith('bextract.') :
+                n = n.replace('bextract.', '')
+                if n in FileSystem.xattr_fields_bextract :
+                    val = str(self._bextract_get_status()[n])
+        if (not val and head in self.dirs and tail in self.dirs[head] and
+            len(self.dirs[head][tail]) != 1 and
+            n in FileSystem.xattr_fields) :
             val = str(self.dirs[head][tail][FileSystem.xattr_fields.index(n)])
         # attribute not found
         if val == None :
@@ -1070,6 +1118,7 @@ class FileSystem(Fuse) :
         xattrs = []
         if path == '/' :
             xattrs += [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields_root]
+            xattrs += [FileSystem.xattr_prefix + 'bextract.' + a for a in FileSystem.xattr_fields_bextract]
         if (head in self.dirs and tail in self.dirs[head] and 
             len(self.dirs[head][tail]) != 1) :
             xattrs += [FileSystem.xattr_prefix + a for a in FileSystem.xattr_fields]
@@ -1211,12 +1260,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="extract contents of most recent non-full job upon filesystem initialization (implies prefetch_symlinks) [default: %default]")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
-    server.parser.add_option(mountopt="retry_interval", metavar="SECONDS", default=server.retry_interval, type="int",
-                             help="time interval between retries in case of storage volume access failure [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
                              help="user specified cache path (hint: combine this with one of the prefetch options) [default: %default]")
-    server.parser.add_option(mountopt="notify", action="store_true", default=server.notify,
-                             help="enable notifications [default: %default]")
     server.parser.add_option(mountopt="trace", action="store_true", default=server.trace,
                              help="dump debug trace to console (should be used with -f option) [default: %default]")
 
