@@ -10,6 +10,7 @@ import pexpect
 import time
 import re
 import shutil
+import threading
 from datetime import datetime, timedelta
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
@@ -495,14 +496,16 @@ class Database :
             raise ValueError, 'unknown database driver %s.' % self.driver
         self.cursor = self.connection.cursor()
 
-    def __del__(self) :
+    def close(self) :
         '''
         Close database connection
         '''
         if self.cursor :
             self.cursor.close()
+            self.cursor = None
         if self.connection :
             self.connection.close()
+            self.connection = None
 
     def query(self, sql, fetch = True) :
         '''
@@ -643,7 +646,10 @@ class FileSystem(Fuse) :
         '''
         Initialize filesystem
         '''
-
+        
+        self._extract_lock = threading.Lock()
+        self._getattr_lock = threading.Lock()
+        
         # default option values
         self.trace = False
         self.driver = 'sqlite3'
@@ -752,6 +758,9 @@ class FileSystem(Fuse) :
         '''
         extract path list from storage, returns path list of extracted files
         '''
+        # serialize extractions
+        self._extract_lock.acquire()
+        
         items = []
         realpath_list = []
         hardlink_targets = []
@@ -789,6 +798,7 @@ class FileSystem(Fuse) :
                         makedirs(os.path.dirname(symlinkfile))
                         touch(symlinkfile, symlinktime)
 
+        self._extract_lock.release()
         return realpath_list
     
     def _hardlink_target(self, path) :
@@ -952,7 +962,7 @@ class FileSystem(Fuse) :
         files = self.catalog.query(self.client, self.fileset, self.datetime, self.recent_job, self.joblist)
         self.datetime = self.catalog.datetime # validated 
         # we don't need the database anymore
-        self.db = None 
+        self.db.close()
 
         prefetches = []
         if self.prefetch_everything :
@@ -1018,6 +1028,15 @@ class FileSystem(Fuse) :
         print 'Jobs in file system: %s' % self.joblist
         print "BaculaFS ready (%d files)." % len(files)
 
+    def shutdown(self) :
+        '''
+        remove cache directory if required
+        '''
+        if self.cleanup and not self.user_cache_path :
+            if self.trace :
+                print 'removing cache directory: %s' % self.cache_prefix
+            shutil.rmtree(self.cache_prefix, ignore_errors = True)
+        
     def getxattr(self, path, name, size):
         '''
         get value of extended attribute
@@ -1074,6 +1093,7 @@ class FileSystem(Fuse) :
         '''
         head, tail = self._split(path)
         if head in self.dirs and tail in self.dirs[head] :
+            self._getattr_lock.acquire()
             attrs = self.dirs[head][tail][-1]
             # decode and cache stat info
             if not attrs :
@@ -1086,6 +1106,7 @@ class FileSystem(Fuse) :
                     if self.trace :
                         print 'warning: %s has negative timestamp %s=%d, will use 0' % (path, a, t)
                     setattr(attrs, a, 0)
+            self._getattr_lock.release()
             return attrs
         else:
             return -errno.ENOENT
@@ -1114,16 +1135,8 @@ class FileSystem(Fuse) :
                 link = os.path.normpath(self.fuse_args.mountpoint + link)
             return link
         return -errno.ENOENT
-
-    def fsdestroy(self) :
-        '''
-        remove cache directory if required
-        '''
-        if self.cleanup and not self.user_cache_path :
-            if self.trace :
-                print 'removing cache directory: %s' % self.cache_prefix
-            shutil.rmtree(self.cache_prefix, ignore_errors = True)
     
+
     class _File(object) :
         def __init__(self, fs, path, flags, *mode) :
             self.fs = fs
@@ -1156,7 +1169,7 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
     server = FileSystem(version="BaculaFS version: %s\nbextract version: %s\nPython FUSE version: %s" % (__version__, bacula_version, fuse.__version__), usage=usage)
 
-    server.multithreaded = False
+    server.multithreaded = True
 
     server.parser.add_option(mountopt="driver", metavar="DRIVER", default=server.driver,
                              help="database driver [default: %default]")
@@ -1214,12 +1227,20 @@ BaculaFS: expose the Bacula catalog as a user-space file system
             if not bacula_version :
                 raise fuse.FuseError('cannot determine Bacula bextract version - is it installed?')
             else :
+                # we initialize before main (i.e. not in fsinit) so that
+                # any failure here aborts the mount
                 server.initialize()
     except :
         traceback.print_exc()
         sys.exit(1)
 
     server.main()
+
+    # we shutdown after main, i.e. not in fsshutdown, because
+    # calling fsshutdown with multithreaded==True seems to cause
+    # the python fuse process to hang waiting for the python gil
+    if server.fuse_args.mount_expected() :
+        server.shutdown()
 
         
 if __name__ == '__main__':

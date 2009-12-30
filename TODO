@@ -1,8 +1,20 @@
 TODO
 ----
 - use python's logging facility for debug messages
+- add xattrs to root directory to observe/control extraction,
+   instead of notify:
+   baculafs.bextract.path - (read) path being extracted
+   baculafs.bextract.retry_count - 0..10 retry count
+   baculafs.bextract.missing_volume -  missing volume name
+   baculafs.bextract.pending - count of pending extractions
+   baculafs.bextract.state -
+   'run': (read/write) signal baculafs to start/continue extraction
+   'idle': (read/write) signal baculafs to cancel current extraction and stop
+   extraction
+   'user': (read) user intervention required
 - complete packaging, add license(s), publish project
    
++ make baculafs multithreaded (serialize extractions and getattr)
 + add option to clear cache on umount
 + add support for other database drivers
 + package (with easy install?)
