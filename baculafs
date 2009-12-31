@@ -5,6 +5,7 @@ import sys
 import os
 import stat
 import errno
+import fcntl
 import tempfile
 import pexpect
 import time
@@ -882,8 +883,34 @@ class FileSystem(Fuse) :
         status = copy.deepcopy(self._bextract_status)
         self._bextract_status_lock.release()
         return status
+
+    def _bextract_flock(self) :
+        '''
+        lock the storage daemon configuration file
+        '''
+        # we allow locking to fail, so as to allow
+        # at least a single instance of baculafs,
+        # even if we can't lock the sd conf file
+        try :
+            f = open(self.conf, 'r')
+            fcntl.flock(f, fcntl.LOCK_EX)
+            return f
+        except :
+            traceback.print_exc()
+            return None
         
-        
+    def _bextract_funlock(self, f) :
+        '''
+        unlock the file f
+        '''
+        if not f :
+            return
+        try :
+            fcntl.flock(f, fcntl.LOCK_UN)
+            f.close()
+        except :
+            traceback.print_exc()
+
     def _bextract(self, items) :
         '''
         extract list of items from Bacula storage device
@@ -897,6 +924,11 @@ class FileSystem(Fuse) :
                                    'volume': items[0][-1][0][0],
                                    'retries': 0,
                                    'state': 'run'})
+
+        # we serialize calls to bextract across instances of baculafs
+        # by locking the storage daemon configuration file
+        # (note that this may not work over NFS)
+        f = self._bextract_flock()
         
         child = pexpect.spawn(cmd)
         if self.trace :
@@ -939,6 +971,9 @@ class FileSystem(Fuse) :
                 child.close()
                 break
 
+        # unlock the sd configuration file
+        self._bextract_funlock(f)
+        
         self._bextract_set_status(FileSystem.bextract_done)
         if child.exitstatus or child.signalstatus :
             self._bextract_increment_counter('failures', 1)
@@ -967,7 +1002,10 @@ class FileSystem(Fuse) :
         '''
         initialize database, catalog
         '''
+
         print "Populating file system ... "
+
+        # setup cache
         if self.user_cache_path :
             self.cache_prefix = self.user_cache_path
         else :
@@ -978,7 +1016,12 @@ class FileSystem(Fuse) :
         makedirs(self.cache_bsrpath)
         self.cache_symlinks = os.path.normpath(self.cache_prefix + '/symlinks')
         makedirs(self.cache_symlinks)
+
+        # test access to sd conf file
+        open(self.conf, 'r').close()
+        # init bextract failure pattren
         self.fail_pattern = 'Mount Volume "([^"]+)" on device "%s" (.*) and press return when ready:' % self.device
+        # init database and catalog
         self.db = Database(self.driver,
                            self.host,
                            self.port,
@@ -1267,17 +1310,17 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
     server.parse(values=server, errex=1)
 
-    try:
-        if server.fuse_args.mount_expected() :
-            if not bacula_version :
-                raise fuse.FuseError('cannot determine Bacula bextract version - is it installed?')
-            else :
-                # we initialize before main (i.e. not in fsinit) so that
-                # any failure here aborts the mount
+    if server.fuse_args.mount_expected() :
+        if not bacula_version :
+            raise RuntimeError, 'cannot determine Bacula bextract version - is it installed?'
+        else :
+            # we initialize before main (i.e. not in fsinit) so that
+            # any failure here aborts the mount
+            try :
                 server.initialize()
-    except :
-        traceback.print_exc()
-        sys.exit(1)
+            except :
+                server.shutdown()
+                raise
 
     server.main()
 
