@@ -1213,7 +1213,7 @@ class FileSystem(Fuse) :
         for key in self.dirs[path].keys() :
             if len(key) > 0:
                 bs = self.getattr(path + key)
-                ino = bs.st_ino
+                ino = bs.st_ino if bs.st_ino != 0 else -1
                 yield fuse.Direntry(key, ino=ino)
             
     def readlink(self, path):
