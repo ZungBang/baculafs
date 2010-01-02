@@ -684,6 +684,7 @@ class FileSystem(Fuse) :
         self.prefetch_regex = None
         self.prefetch_symlinks = False
         self.prefetch_recent = False
+        self.prefetch_diff = None
         self.prefetch_everything = False
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
@@ -996,7 +997,17 @@ class FileSystem(Fuse) :
                 os.write(bsrfd, 'Count=1\n')
         os.close(bsrfd)
         return bsrpath
-        
+
+    def _match_stat(self, path, bs) :
+        '''
+        determine if stat of path matches bs
+        '''
+        found = False
+        if os.path.exists(path) or os.path.lexists(path) :
+            s = os.lstat(path)
+            found = all([getattr(s, attr) == getattr(bs, attr)
+                         for attr in ['st_mode', 'st_uid', 'st_gid', 'st_size', 'st_mtime']])
+        return found
 
     def initialize(self):
         '''
@@ -1037,9 +1048,12 @@ class FileSystem(Fuse) :
         self.db.close()
 
         prefetches = []
+
+        # validate prefetch conditions
         if self.prefetch_everything :
             self.prefetch_recent = False
             self.prefetch_regex = None
+            self.prefetch_diff = None
             self.prefetch_symlinks = True
         if self.prefetch_regex :
             try :
@@ -1049,6 +1063,17 @@ class FileSystem(Fuse) :
                 # bad regex: show traceback and ignore
                 traceback.print_exc()
                 self.prefetch_regex = None
+        if self.prefetch_diff :
+            self.prefetch_diff = os.path.normpath(os.path.expanduser(self.prefetch_diff))
+            try :
+                if os.path.isdir(self.prefetch_diff) :
+                    self.prefetch_symlinks = True
+                else :
+                    self.prefetch_diff = None
+            except :
+                # can't access target directory: show traceback and ignore
+                traceback.print_exc()
+                self.prefetch_diff = None
         if self.prefetch_recent :
             self.prefetch_symlinks = True
         if self.prefetch_symlinks :
@@ -1063,20 +1088,18 @@ class FileSystem(Fuse) :
             # make file entry
             if self.prefetch_attrs :
                 entry = file[2:] + self._bacula_stat(file[-2])
+                # detemine if we need to prefetch this entry
                 filepath = head + tail
-                if (self.prefetch_everything and 
-                    not stat.S_ISDIR(entry[-1].st_mode)) :
-                    prefetches.append(filepath)
-                elif (self.prefetch_recent and
-                      file[3] == self.catalog.most_recent_jobid and
-                      not stat.S_ISDIR(entry[-1].st_mode)) :
-                    prefetches.append(filepath)
-                elif (self.prefetch_regex and
-                      not stat.S_ISDIR(entry[-1].st_mode) and
-                      regex.match(filepath)) :
-                    prefetches.append(filepath)
-                elif (self.prefetch_symlinks and
-                      stat.S_ISLNK(entry[-1].st_mode)) :
+                if (not stat.S_ISDIR(entry[-1].st_mode) and
+                    (self.prefetch_everything or
+                     (self.prefetch_recent and
+                      file[3] == self.catalog.most_recent_jobid) or 
+                     (self.prefetch_regex and
+                      regex.match(filepath)) or
+                     (self.prefetch_diff and
+                      not self._match_stat(self.prefetch_diff + filepath, entry[-1])) or 
+                     (self.prefetch_symlinks and
+                      stat.S_ISLNK(entry[-1].st_mode)))) :
                     prefetches.append(filepath)
             else :
                 entry = file[2:] + (None,) # stat info placeholder
@@ -1301,6 +1324,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="extract all objects that match REGEX upon filesystem initialization (implies prefetch_attrs) [default: %default]")
     server.parser.add_option(mountopt="prefetch_recent", action="store_true", default=server.prefetch_recent,
                              help="extract contents of most recent non-full job upon filesystem initialization (implies prefetch_symlinks) [default: %default]")
+    server.parser.add_option(mountopt="prefetch_diff", metavar="PATH", default=server.prefetch_diff,
+                             help="extract files that do not match files at PATH (hint: speeds up rsync; implies prefetch_symlinks) [default: %default]")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
