@@ -552,20 +552,21 @@ class Catalog :
         use formatted strings for building parametrized queries.
         '''
         # validate client
-        self.clients = dict(self.db.query(SQL.clients))
-        if len(self.clients) == 1 and not client :
-            client = self.clients.keys()[0]
-        if client not in self.clients :
-            raise ValueError, 'client must be one of %s' % self.clients.keys()
-        self.client_id = self.clients[client]
+        self.client = client
+        clients = dict(self.db.query(SQL.clients))
+        if len(clients) == 1 and not self.client :
+            self.client = clients.keys()[0]
+        if self.client not in clients :
+            raise ValueError, 'client must be one of %s' % clients.keys()
+        self.client_id = clients[self.client]
         # validate fileset
-        self.filesets = [f[0] for f in self.db.query(SQL.filesets % (self.client_id, self.client_id))]
-        if len(self.filesets) == 1 and not fileset :
-            fileset = self.filesets[0]
-        elif len(self.filesets) == 0 :
-            raise RuntimeError, 'no filesets found for %s' % client
-        elif fileset not in self.filesets :
-            raise ValueError, 'fileset must be one of %s' % self.filesets
+        filesets = [f[0] for f in self.db.query(SQL.filesets % (self.client_id, self.client_id))]
+        if len(filesets) == 1 and not fileset :
+            fileset = filesets[0]
+        elif len(filesets) == 0 :
+            raise RuntimeError, 'no filesets found for %s' % self.client
+        elif fileset not in filesets :
+            raise ValueError, 'fileset must be one of %s' % filesets
         self.fileset = self.db.query(SQL.fileset % fileset)[0]
         # validate timespec
         if timespec :
@@ -1043,7 +1044,10 @@ class FileSystem(Fuse) :
         self.catalog = Catalog(self.db)
         self.base64 = Base64()
         files = self.catalog.query(self.client, self.fileset, self.datetime, self.recent_job, self.joblist)
-        self.datetime = self.catalog.datetime # validated 
+        # validated values
+        self.client = self.catalog.client
+        self.fileset = self.catalog.fileset[1]
+        self.datetime = self.catalog.datetime
         # we don't need the database anymore
         self.db.close()
 
