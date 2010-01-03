@@ -540,7 +540,7 @@ class Database :
         '''
         Execute SQL and fetch all results
         '''
-        self.logger.debug(' '.join(sql.split()))
+        self.logger.debug(sql)
         self.cursor.execute(sql)
         if fetch :
             return self.cursor.fetchall()
