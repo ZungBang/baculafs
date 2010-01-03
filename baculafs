@@ -15,6 +15,33 @@ import threading
 import copy
 from datetime import datetime, timedelta
 
+import logging
+import logging.handlers
+LOGGING_LEVELS = {'debug': logging.DEBUG,
+                  'info': logging.INFO,
+                  'warning': logging.WARNING,
+                  'error': logging.ERROR,
+                  'critical': logging.CRITICAL}
+
+class Logfile :
+    '''
+    file like object that wraps a logger object
+    '''
+    def __init__(self, logger, level, handlers) :
+        self.logger = logger
+        self.level = level
+        self.handlers = handlers
+
+    def write(self, message) :
+        if message.endswith('\n') :
+            message = message.rstrip()
+        self.logger.log(self.level, message)
+
+    def flush(self) :
+        for handler in self.handlers :
+            handler.flush()
+        
+
 # pull in some spaghetti to make this stuff work without fuse-py being installed
 try:
     import _find_fuse_parts
@@ -464,12 +491,12 @@ class Database :
         SQL.SQLITE3: '/var/lib/bacula/bacula.db'
         }
     
-    def __init__(self, driver, host, port, database, username, password, trace) :
+    def __init__(self, driver, host, port, database, username, password, logger) :
         '''
         Initialize database driver: connect the database,
         create connection and cusror objects.
         '''
-        self.trace = trace
+        self.logger = logger
         self.connection = None
         self.cursor = None
         self.driver = driver
@@ -513,8 +540,7 @@ class Database :
         '''
         Execute SQL and fetch all results
         '''
-        if self.trace :
-            print sql
+        self.logger.debug(' '.join(sql.split()))
         self.cursor.execute(sql)
         if fetch :
             return self.cursor.fetchall()
@@ -664,7 +690,8 @@ class FileSystem(Fuse) :
         self._initialized = False
         
         # default option values
-        self.trace = False
+        self.logging = 'warning'
+        self.syslog = False
         self.driver = 'sqlite3'
         self.database = None
         self.host = 'localhost'
@@ -898,7 +925,7 @@ class FileSystem(Fuse) :
             fcntl.flock(f, fcntl.LOCK_EX)
             return f
         except :
-            traceback.print_exc()
+            self.logger.warning(traceback.format_exc())
             return None
         
     def _bextract_funlock(self, f) :
@@ -911,7 +938,7 @@ class FileSystem(Fuse) :
             fcntl.flock(f, fcntl.LOCK_UN)
             f.close()
         except :
-            traceback.print_exc()
+            self.logger.warning(traceback.format_exc())
 
     def _bextract(self, items) :
         '''
@@ -919,8 +946,7 @@ class FileSystem(Fuse) :
         '''
         bsrpath = self._write_bsr(items)
         cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
-        if self.trace :
-            print cmd
+        self.logger.debug(cmd)
             
         self._bextract_set_status({'path': items[0][1],
                                    'volume': items[0][-1][0][0],
@@ -933,8 +959,7 @@ class FileSystem(Fuse) :
         f = self._bextract_flock()
         
         child = pexpect.spawn(cmd)
-        if self.trace :
-            child.logfile = sys.stdout
+        child.logfile = self.logfile #sys.stdout
 
         attempt = 0
         missing = ''
@@ -957,12 +982,14 @@ class FileSystem(Fuse) :
                                                'state': '*user intervention required*'})
                 # wait for user
                 if not self._initialized :
-                    if not self.trace :
+                    if self.loglevel != logging.DEBUG :
                         sys.stdout.write('Mount Volume "%s" on device "%s" %s and press return when ready: ' % 
                                          (missing, self.device, child.match.groups()[1]))
                         sys.stdout.flush()
                     sys.stdin.read(1)
                 else :
+                    self.logger.error('Mount volume "%s" on device "%s" %s and run "attr -s baculafs.bextract.state -V run %s" when ready' %
+                                      (missing, self.device, child.match.groups()[1], self.fuse_args.mountpoint))
                     self._bextract_user_intervention_event.clear()
                     self._bextract_user_intervention_event.wait()
                     self._bextract_user_intervention_event.clear()                    
@@ -978,6 +1005,7 @@ class FileSystem(Fuse) :
         
         self._bextract_set_status(FileSystem.bextract_done)
         if child.exitstatus or child.signalstatus :
+            self.logger.error('extraction failed (bsr file: %s)' % bsrpath)
             self._bextract_increment_counter('failures', 1)
         return (child.exitstatus, child.signalstatus)
 
@@ -1010,12 +1038,44 @@ class FileSystem(Fuse) :
                          for attr in ['st_mode', 'st_uid', 'st_gid', 'st_size', 'st_mtime']])
         return found
 
+    def _setup_logging(self) :
+        '''
+        initialize logging facility
+        '''
+        # log messages are sent to both console and syslog
+        # use -o logging=level to set the log level
+        # use -o syslog to enable logging to syslog
+        loghandlers = []
+        self.logger = logging.getLogger('BaculaFS')
+        self.loglevel = LOGGING_LEVELS.get(self.logging, logging.NOTSET)
+        self.logger.setLevel(self.loglevel)
+        h = logging.StreamHandler()
+        h.setLevel(self.loglevel)
+        formatter = logging.Formatter("%(message)s")
+        h.setFormatter(formatter)
+        self.logger.addHandler(h)
+        loghandlers.append(h)
+        if self.syslog :
+            try :
+                h = logging.handlers.SysLogHandler('/dev/log')
+                h.setLevel(self.loglevel)
+                formatter = logging.Formatter("%(name)s: %(levelname)-8s - %(message)s")
+                h.setFormatter(formatter)
+                self.logger.addHandler(h)
+                loghandlers.append(h)
+            except :
+                self.logger.warning(traceback.format_exc())
+        self.logfile = Logfile(self.logger, logging.DEBUG, loghandlers)
+
+    
     def initialize(self):
         '''
         initialize database, catalog
         '''
 
-        print "Populating file system ... "
+        self._setup_logging()
+
+        self.logger.info('Populating file system ... ')
 
         # setup cache
         if self.user_cache_path :
@@ -1040,7 +1100,7 @@ class FileSystem(Fuse) :
                            self.database,
                            self.username,
                            self.password,
-                           self.trace)
+                           self.logger)
         self.catalog = Catalog(self.db)
         self.base64 = Base64()
         files = self.catalog.query(self.client, self.fileset, self.datetime, self.recent_job, self.joblist)
@@ -1065,7 +1125,7 @@ class FileSystem(Fuse) :
                 self.prefetch_attrs = True
             except :
                 # bad regex: show traceback and ignore
-                traceback.print_exc()
+                self.logger.warning(traceback.format_exc())
                 self.prefetch_regex = None
         if self.prefetch_diff :
             self.prefetch_diff = os.path.normpath(os.path.expanduser(self.prefetch_diff))
@@ -1076,7 +1136,7 @@ class FileSystem(Fuse) :
                     self.prefetch_diff = None
             except :
                 # can't access target directory: show traceback and ignore
-                traceback.print_exc()
+                self.logger.warning(traceback.format_exc())
                 self.prefetch_diff = None
         if self.prefetch_recent :
             self.prefetch_symlinks = True
@@ -1120,13 +1180,13 @@ class FileSystem(Fuse) :
 
         npf = len(prefetches)
         if npf > 0 :
-            print "Prefetching %d objects ... " % npf
+            self.logger.info('Prefetching %d objects ... ' % npf)
             self._extract(prefetches)
-        print 'Cache directory is: %s' % self.cache_prefix
+        self.logger.info('Cache directory is: %s' % self.cache_prefix)
         self.joblist = ' '.join([str(job[0]) for job in self.catalog.jobs])
-        print 'Jobs in file system: %s' % self.joblist
-        print "BaculaFS ready (%d files)." % len(files)
-
+        self.logger.info('Jobs in file system: %s' % self.joblist)
+        self.logger.info('BaculaFS ready (%d files).' % len(files))
+        
         self._initialized = True
 
     def shutdown(self) :
@@ -1134,8 +1194,7 @@ class FileSystem(Fuse) :
         remove cache directory if required
         '''
         if self.cleanup and not self.user_cache_path :
-            if self.trace :
-                print 'removing cache directory: %s' % self.cache_prefix
+            self.logger.info('removing cache directory: %s' % self.cache_prefix)
             shutil.rmtree(self.cache_prefix, ignore_errors = True)
         
     def setxattr(self, path, name, value, flags):
@@ -1222,8 +1281,7 @@ class FileSystem(Fuse) :
             for a in ['st_atime','st_mtime','st_ctime'] :
                 t = getattr(attrs, a) 
                 if t < 0 :
-                    if self.trace :
-                        print 'warning: %s has negative timestamp %s=%d, will use 0' % (path, a, t)
+                    self.logger.warning('%s has negative timestamp %s=%d, will use 0' % (path, a, t))
                     setattr(attrs, a, 0)
             self._getattr_lock.release()
             return attrs
@@ -1334,8 +1392,10 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
                              help="user specified cache path (hint: combine this with one of the prefetch options) [default: %default]")
-    server.parser.add_option(mountopt="trace", action="store_true", default=server.trace,
-                             help="dump debug trace to console (should be used with -f option) [default: %default]")
+    server.parser.add_option(mountopt="logging", metavar="LEVEL", default=server.logging,
+                             help="logging level (allowed values: %s) " % ','.join(LOGGING_LEVELS.keys()) + "[default: %default]")
+    server.parser.add_option(mountopt="syslog", action="store_true", default=server.syslog,
+                             help="log to both syslog and console [default: %default]")
 
     server.parse(values=server, errex=1)
 
