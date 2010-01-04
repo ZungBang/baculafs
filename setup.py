@@ -1,22 +1,19 @@
 #!/usr/bin/python
 
-import distribute_setup
-distribute_setup.use_setuptools()
+from setuptools import setup, find_packages
 
-from setuptools import setup
-
-import imp
-baculafs = imp.load_source('baculafs', 'baculafs')
+from baculafs import __version__
 
 setup(
     name='BaculaFS',
-    version=baculafs.__version__,
+    version=__version__,
     description='Bacula FUSE File System',
     long_description=open('README.rst').read(),
     author='Avi Rozen',
     author_email='avi.rozen@gmail.com',
     url='http://www.example.com',
-    scripts=['baculafs'],
+    entry_points = { 'console_scripts': [ 'baculafs = baculafs:main' ] },
+    packages = find_packages(),
     license='GPL',
     platforms=['Linux'],
     install_requires=['fuse_python>=0.2','pexpect>=2.3'],

@@ -1,46 +1,19 @@
-#! /usr/bin/env python
+__version__ = '0.0.1'
 
-import traceback
-import sys
 import os
 import stat
 import errno
-import fcntl
+import copy
 import tempfile
-import pexpect
-import time
-import re
 import shutil
 import threading
-import copy
-from datetime import datetime, timedelta
+import traceback
+import pexpect
+import fcntl
 
-import logging
-import logging.handlers
-LOGGING_LEVELS = {'debug': logging.DEBUG,
-                  'info': logging.INFO,
-                  'warning': logging.WARNING,
-                  'error': logging.ERROR,
-                  'critical': logging.CRITICAL}
-
-class Logfile :
-    '''
-    file like object that wraps a logger object
-    '''
-    def __init__(self, logger, level, handlers) :
-        self.logger = logger
-        self.level = level
-        self.handlers = handlers
-
-    def write(self, message) :
-        if message.endswith('\n') :
-            message = message.rstrip()
-        self.logger.log(self.level, message)
-
-    def flush(self) :
-        for handler in self.handlers :
-            handler.flush()
-        
+from LogFile import *
+from Database import *
+from Catalog import *
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
 try:
@@ -58,9 +31,6 @@ if not hasattr(fuse, '__version__'):
 fuse.fuse_python_api = (0, 2)
 
 fuse.feature_assert('stateful_files', 'has_init')
-
-__version__ = '0.0.1'
-
 
 def flag2mode(flags):
     '''
@@ -98,551 +68,6 @@ def touch(fname, times = None):
     finally:
         fhandle.close()
         
-
-def bextract_version() :
-    '''
-    return version string of bextract,
-    return None if not runnable or version cannot be parsed
-    '''
-    version = None
-    try :
-        child = pexpect.spawn('bextract -?')
-        i = child.expect(['Version: ([^(]*) \(([^)]*)\)', pexpect.EOF])
-        if i == 0 :
-            version = '%s (%s)' % child.match.groups()
-        child.close()
-    except :
-        pass
-    return version
-
-class SQL :
-    '''
-    Holds all SQL statements used by baculafs.
-    Adapted from Bacula source code.
-    '''
-
-    MYSQL = 'mysql'
-    POSTGRESQL = 'postgresql'
-    SQLITE = 'sqlite'
-    SQLITE3 = 'sqlite3'
-    
-    clients = 'SELECT Client.Name,ClientId FROM Client'
-    
-    filesets = '''
-    SELECT DISTINCT FileSet.FileSet FROM Job,
-    Client,FileSet WHERE Job.FileSetId=FileSet.FileSetId
-    AND Job.ClientId=%s AND Client.ClientId=%s 
-    ORDER BY FileSet.FileSet
-    '''
-
-    fileset = '''
-    SELECT FileSetId,FileSet,MD5,CreateTime FROM FileSet
-    WHERE FileSet='%s' ORDER BY CreateTime DESC LIMIT 1
-    '''
-
-    create_temp = {
-        MYSQL: '''
-    CREATE TEMPORARY TABLE temp (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED,
-    ClientId INTEGER UNSIGNED,
-    Level CHAR,
-    JobFiles INTEGER UNSIGNED,
-    JobBytes BIGINT UNSIGNED,
-    StartTime TEXT,
-    VolumeName TEXT,
-    StartFile INTEGER UNSIGNED,
-    VolSessionId INTEGER UNSIGNED,
-    VolSessionTime INTEGER UNSIGNED)
-    ''',
-        
-        POSTGRESQL: '''
-    CREATE TEMPORARY TABLE temp (
-    JobId INTEGER NOT NULL,
-    JobTDate BIGINT,
-    ClientId INTEGER,
-    Level CHAR,
-    JobFiles INTEGER,
-    JobBytes BIGINT,
-    StartTime TEXT,
-    VolumeName TEXT,
-    StartFile INTEGER,
-    VolSessionId INTEGER,
-    VolSessionTime INTEGER)
-    ''',
-        
-        SQLITE: '''
-    CREATE TEMPORARY TABLE temp (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED,
-    ClientId INTEGER UNSIGNED,
-    Level CHAR,
-    JobFiles INTEGER UNSIGNED,
-    JobBytes BIGINT UNSIGNED,
-    StartTime TEXT,
-    VolumeName TEXT,
-    StartFile INTEGER UNSIGNED,
-    VolSessionId INTEGER UNSIGNED,
-    VolSessionTime INTEGER UNSIGNED)
-    ''',
-        
-        SQLITE3: '''
-    CREATE TEMPORARY TABLE temp (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED,
-    ClientId INTEGER UNSIGNED,
-    Level CHAR,
-    JobFiles INTEGER UNSIGNED,
-    JobBytes BIGINT UNSIGNED,
-    StartTime TEXT,
-    VolumeName TEXT,
-    StartFile INTEGER UNSIGNED,
-    VolSessionId INTEGER UNSIGNED,
-    VolSessionTime INTEGER UNSIGNED)
-    ''' }
-
-    create_temp1 = {
-        MYSQL: '''
-    CREATE TEMPORARY TABLE temp1 (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED)
-    ''',
-        
-        POSTGRESQL: '''
-    CREATE TEMPORARY TABLE temp1 (
-    JobId INTEGER NOT NULL,
-    JobTDate BIGINT)
-    ''',
-        
-        SQLITE: '''
-    CREATE TEMPORARY TABLE temp1 (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED)
-    ''',
-        
-        SQLITE3: '''
-    CREATE TEMPORARY TABLE temp1 (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED)
-    ''' }
-
-    temp  = 'SELECT * FROM temp'
-
-    temp1 = 'SELECT * FROM temp1'
-
-    del_temp = 'DROP TABLE temp'
-    
-    del_temp1 = 'DROP TABLE temp1'
-
-    full_jobs_temp1 = '''
-    INSERT INTO temp1 SELECT Job.JobId,JobTdate 
-    FROM Client,Job,JobMedia,Media,FileSet WHERE Client.ClientId=%s
-    AND Job.ClientId=%s
-    AND Job.StartTime < '%s'
-    AND Level='F' AND JobStatus IN ('T','W') AND Type='B' 
-    AND JobMedia.JobId=Job.JobId 
-    AND Media.Enabled=1 
-    AND JobMedia.MediaId=Media.MediaId 
-    AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet='%s'
-    ORDER BY Job.JobTDate DESC LIMIT 1
-    '''
-
-    full_jobs_temp = '''
-    INSERT INTO temp SELECT Job.JobId,Job.JobTDate,
-    Job.ClientId,Job.Level,Job.JobFiles,Job.JobBytes,
-    StartTime,VolumeName,JobMedia.StartFile,VolSessionId,VolSessionTime 
-    FROM temp1,Job,JobMedia,Media WHERE temp1.JobId=Job.JobId 
-    AND Level='F' AND JobStatus IN ('T','W') AND Type='B' 
-    AND Media.Enabled=1 
-    AND JobMedia.JobId=Job.JobId 
-    AND JobMedia.MediaId=Media.MediaId
-    '''
-
-    diff_jobs_temp = '''
-    INSERT INTO temp SELECT Job.JobId,Job.JobTDate,Job.ClientId,
-    Job.Level,Job.JobFiles,Job.JobBytes,
-    Job.StartTime,Media.VolumeName,JobMedia.StartFile,
-    Job.VolSessionId,Job.VolSessionTime 
-    FROM Job,JobMedia,Media,FileSet 
-    WHERE Job.JobTDate>%d AND Job.StartTime<'%s'
-    AND Job.ClientId=%d 
-    AND JobMedia.JobId=Job.JobId 
-    AND Media.Enabled=1 
-    AND JobMedia.MediaId=Media.MediaId 
-    AND Job.Level='D' AND JobStatus IN ('T','W') AND Type='B' 
-    AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet='%s'
-    ORDER BY Job.JobTDate DESC LIMIT 1
-    '''
-
-    incr_jobs_temp = '''
-    INSERT INTO temp SELECT Job.JobId,Job.JobTDate,Job.ClientId,
-    Job.Level,Job.JobFiles,Job.JobBytes,
-    Job.StartTime,Media.VolumeName,JobMedia.StartFile,
-    Job.VolSessionId,Job.VolSessionTime 
-    FROM Job,JobMedia,Media,FileSet 
-    WHERE Job.JobTDate>%d AND Job.StartTime<'%s' 
-    AND Job.ClientId=%d
-    AND Media.Enabled=1 
-    AND JobMedia.JobId=Job.JobId 
-    AND JobMedia.MediaId=Media.MediaId 
-    AND Job.Level='I' AND JobStatus IN ('T','W') AND Type='B' 
-    AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet='%s'
-    '''
-
-    selected_jobs_temp = '''
-    INSERT INTO temp SELECT Job.JobId,Job.JobTDate,Job.ClientId,
-    Job.Level,Job.JobFiles,Job.JobBytes,
-    Job.StartTime,Media.VolumeName,JobMedia.StartFile,
-    Job.VolSessionId,Job.VolSessionTime 
-    FROM Job,JobMedia,Media,FileSet 
-    WHERE Job.JobId IN (%s)
-    AND Job.ClientId=%d
-    AND Media.Enabled=1 
-    AND JobMedia.JobId=Job.JobId 
-    AND JobMedia.MediaId=Media.MediaId 
-    AND JobStatus IN ('T','W') AND Type='B' 
-    AND Job.FileSetId=FileSet.FileSetId 
-    AND FileSet.FileSet='%s'
-    '''
-
-    jobs = 'SELECT DISTINCT JobId,StartTime FROM temp ORDER BY StartTime ASC'
-
-    base_jobs = '''
-    SELECT DISTINCT BaseJobId
-    FROM Job JOIN BaseFiles USING (JobId)
-    WHERE Job.HasBase = 1
-    AND Job.JobId IN (%s)
-    '''
-
-    purged_jobs = '''
-    SELECT SUM(PurgedFiles) FROM Job WHERE JobId IN (%s)
-    '''
-    
-    files = '''
-    SELECT Path.Path, Filename.Name, Temp.FileIndex, Temp.JobId, LStat, MD5 
-     FROM ( %s ) AS Temp 
-     JOIN Filename ON (Filename.FilenameId = Temp.FilenameId) 
-     JOIN Path ON (Path.PathId = Temp.PathId) 
-    WHERE FileIndex > 0 
-    ORDER BY Temp.JobId, FileIndex ASC
-    '''
-
-    with_basejobs = {
-        MYSQL: '''
-     SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
-            File.FilenameId AS FilenameId, LStat, MD5 
-     FROM Job, File, ( 
-         SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
-           FROM ( 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM File JOIN Job USING (JobId) 
-              WHERE File.JobId IN (%s) 
-               UNION ALL 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM BaseFiles 
-                    JOIN File USING (FileId) 
-                    JOIN Job  ON    (BaseJobId = Job.JobId) 
-              WHERE BaseFiles.JobId IN (%s) 
-            ) AS tmp GROUP BY PathId, FilenameId 
-         ) AS T1 
-     WHERE (Job.JobId IN ( 
-             SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
-             OR Job.JobId IN (%s)) 
-       AND T1.JobTDate = Job.JobTDate 
-       AND Job.JobId = File.JobId 
-       AND T1.PathId = File.PathId 
-       AND T1.FilenameId = File.FilenameId
-     ''',
-        
-        POSTGRESQL: '''
-      SELECT DISTINCT ON (FilenameId, PathId) StartTime, JobId, FileId, 
-              FileIndex, PathId, FilenameId, LStat, MD5 
-        FROM 
-            (SELECT FileId, JobId, PathId, FilenameId, FileIndex, LStat, MD5 
-               FROM File WHERE JobId IN (%s) 
-              UNION ALL 
-             SELECT File.FileId, File.JobId, PathId, FilenameId, 
-                    File.FileIndex, LStat, MD5 
-               FROM BaseFiles JOIN File USING (FileId) 
-              WHERE BaseFiles.JobId IN (%s) 
-             ) AS T JOIN Job USING (JobId) 
-        ORDER BY FilenameId, PathId, StartTime DESC
-        -- dummy comment for chomping extra parameter: %s
-        -- dummy comment for chomping extra parameter: %s
-     ''',
-        
-        SQLITE: '''
-     SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
-            File.FilenameId AS FilenameId, LStat, MD5 
-     FROM Job, File, ( 
-         SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
-           FROM ( 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM File JOIN Job USING (JobId) 
-              WHERE File.JobId IN (%s) 
-               UNION ALL 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM BaseFiles 
-                    JOIN File USING (FileId) 
-                    JOIN Job  ON    (BaseJobId = Job.JobId) 
-              WHERE BaseFiles.JobId IN (%s) 
-            ) AS tmp GROUP BY PathId, FilenameId 
-         ) AS T1 
-     WHERE (Job.JobId IN ( 
-            SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
-            OR Job.JobId IN (%s)) 
-       AND T1.JobTDate = Job.JobTDate 
-       AND Job.JobId = File.JobId 
-       AND T1.PathId = File.PathId 
-       AND T1.FilenameId = File.FilenameId
-     ''',
-        
-        SQLITE3: '''
-     SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
-            File.FilenameId AS FilenameId, LStat, MD5 
-     FROM Job, File, ( 
-         SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
-           FROM ( 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM File JOIN Job USING (JobId) 
-              WHERE File.JobId IN (%s) 
-               UNION ALL 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM BaseFiles 
-                    JOIN File USING (FileId) 
-                    JOIN Job  ON    (BaseJobId = Job.JobId) 
-              WHERE BaseFiles.JobId IN (%s) 
-            ) AS tmp GROUP BY PathId, FilenameId 
-         ) AS T1 
-     WHERE (Job.JobId IN ( 
-              SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
-             OR Job.JobId IN (%s)) 
-       AND T1.JobTDate = Job.JobTDate 
-       AND Job.JobId = File.JobId 
-       AND T1.PathId = File.PathId 
-       AND T1.FilenameId = File.FilenameId
-    ''' }
-
-    job_records = '''
-    SELECT JobId,VolSessionId,VolSessionTime,
-    PoolId,StartTime,EndTime,JobFiles,JobBytes,JobTDate,Job,JobStatus,
-    Type,Level,ClientId,Name,PriorJobId,RealEndTime,FileSetId,
-    SchedTime,RealEndTime,ReadBytes,HasBase 
-    FROM Job WHERE JobId IN (%s)
-    '''
-
-    volumes = '''
-    SELECT JobMedia.JobId,VolumeName,MediaType,FirstIndex,LastIndex,StartFile,
-    JobMedia.EndFile,StartBlock,JobMedia.EndBlock,Copy,
-    Slot,StorageId,InChanger
-     FROM JobMedia,Media WHERE JobMedia.JobId IN (%s)
-     AND JobMedia.MediaId=Media.MediaId ORDER BY JobMedia.JobId,VolIndex,JobMediaId
-    '''
-    
-class Base64 :
-    '''
-    Bacula specific implementation of a base64 decoder
-    '''
-    digits = [
-        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-        'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-        'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'
-        ]
-
-    def __init__(self) :
-        '''
-        Initialize the Base 64 conversion routines
-        '''
-        self.base64_map = dict(zip(Base64.digits,xrange(0,64)))
-    
-    def decode(self, base64) :
-        '''
-        Convert the Base 64 characters in base64 to a value.
-        '''
-        value = 0
-        first = 0
-        neg = False
-
-        if base64[0] == '-' :
-            neg = True
-            first = 1
-            
-        for i in xrange(first, len(base64)) :
-            value = value << 6
-            value += self.base64_map[base64[i]]
-
-        return -value if neg else value
-    
-class Database :
-    '''
-    This class shields the rest of the code from the pesky details of
-    actually accessing one of the supported databases.
-    '''
-
-    default_database = {
-        SQL.MYSQL: 'bacula',
-        SQL.POSTGRESQL: 'bacula',
-        SQL.SQLITE: '/var/lib/bacula/bacula.db',
-        SQL.SQLITE3: '/var/lib/bacula/bacula.db'
-        }
-    
-    def __init__(self, driver, host, port, database, username, password, logger) :
-        '''
-        Initialize database driver: connect the database,
-        create connection and cusror objects.
-        '''
-        self.logger = logger
-        self.connection = None
-        self.cursor = None
-        self.driver = driver
-        if not database :
-            database = Database.default_database[self.driver]
-        if self.driver == SQL.MYSQL :
-            from MySQLdb import connect
-            self.connection = connect(host=host, port=port, user=username, passwd=password, db=database)
-        elif self.driver == SQL.POSTGRESQL :
-            from psycopg2 import connect
-            self.connection = connect(host=host, port=port, user=username, password=password, database=database)
-        elif self.driver == SQL.SQLITE :
-            from sqlite import connect
-            database = os.path.expanduser(database)
-            if not os.path.isfile(database) or not os.access(database, os.R_OK) :
-                raise RuntimeError, 'cannot read from file %s' % database
-            self.connection = connect(database)
-        elif self.driver == SQL.SQLITE3 :
-            from sqlite3 import connect
-            database = os.path.expanduser(database)
-            if not os.path.isfile(database) or not os.access(database, os.R_OK) :
-                raise RuntimeError, 'cannot read from file %s' % database
-            self.connection = connect(database)
-            self.connection.text_factory = str # fixes sqlite3.OperationalError: Could not decode to UTF-8
-        else :
-            raise ValueError, 'unknown database driver %s.' % self.driver
-        self.cursor = self.connection.cursor()
-
-    def close(self) :
-        '''
-        Close database connection
-        '''
-        if self.cursor :
-            self.cursor.close()
-            self.cursor = None
-        if self.connection :
-            self.connection.close()
-            self.connection = None
-
-    def query(self, sql, fetch = True) :
-        '''
-        Execute SQL and fetch all results
-        '''
-        self.logger.debug(sql)
-        self.cursor.execute(sql)
-        if fetch :
-            return self.cursor.fetchall()
-    
-    
-class Catalog :
-    '''
-    This class represents the Bacula catalog, and provides an interface
-    for generating a list of files for a given set of user supplied
-    query parameters.
-    '''
-
-    datetime_format = '%Y-%m-%d %H:%M:%S'
-    
-    def __init__(self, database) :
-        '''
-        Catalog initialization: DATABASE is a Database driver
-        object.
-        '''
-        self.db = database
-
-        
-    def query(self, client, fileset = None, timespec = None, select_recent_job = False, joblist = None ) :
-        '''
-        Query bacula database, get list of files that match
-        backup prior to given TIMESPEC, for a given CLIENT, FILESET.
-
-        If the date/time is not specified (i.e. it's None) then use
-        the current date/time.
-
-        File records include file path, file name, and stat info.
-
-        Security note: query parameters are never taken from user supplied
-        input, but rather are verified against the catalog. This allows us to
-        use formatted strings for building parametrized queries.
-        '''
-        # validate client
-        self.client = client
-        clients = dict(self.db.query(SQL.clients))
-        if len(clients) == 1 and not self.client :
-            self.client = clients.keys()[0]
-        if self.client not in clients :
-            raise ValueError, 'client must be one of %s' % clients.keys()
-        self.client_id = clients[self.client]
-        # validate fileset
-        filesets = [f[0] for f in self.db.query(SQL.filesets % (self.client_id, self.client_id))]
-        if len(filesets) == 1 and not fileset :
-            fileset = filesets[0]
-        elif len(filesets) == 0 :
-            raise RuntimeError, 'no filesets found for %s' % self.client
-        elif fileset not in filesets :
-            raise ValueError, 'fileset must be one of %s' % filesets
-        self.fileset = self.db.query(SQL.fileset % fileset)[0]
-        # validate timespec
-        if timespec :
-            self.datetime = datetime.strftime(datetime.strptime(timespec, Catalog.datetime_format), Catalog.datetime_format)
-        else :
-            self.datetime = datetime.strftime(datetime.now(), Catalog.datetime_format)
-        # create temporary tables
-        self.db.query(SQL.create_temp[self.db.driver], fetch=False)
-        self.db.query(SQL.create_temp1[self.db.driver], fetch=False)
-        # get list of jobs
-        if joblist :
-            # select from specific jobs
-            self.joblist = ','.join(list(set([str(int(s.strip())) for s in joblist.split()])))
-            self.db.query(SQL.selected_jobs_temp % (self.joblist, self.client_id, self.fileset[1]), fetch=False)
-        else :
-            # select backup before specified datetime
-            self.db.query(SQL.full_jobs_temp1 %
-                          (self.client_id, self.client_id, self.datetime, self.fileset[1]), fetch=False)
-            self.db.query(SQL.full_jobs_temp, fetch=False)
-            full_jobs = self.db.query(SQL.temp1)
-            if len(full_jobs) == 0 :
-                raise RuntimeError, 'no full jobs found'
-            self.db.query(SQL.diff_jobs_temp % (full_jobs[0][1], self.datetime, self.client_id, self.fileset[1]), fetch=False)
-            diff_jobs = self.db.query(SQL.temp)
-            self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]), fetch=False)
-        jobs = self.db.query(SQL.jobs)
-        self.most_recent_jobid = jobs[-1][0] if len(jobs) > 1 else -1
-        # select files from the most recent job only
-        if select_recent_job and self.most_recent_jobid > 0 :
-            jobs = [jobs[-1]]
-        jobs_csl = ','.join([str(job[0]) for job in jobs])
-        base_jobs = self.db.query(SQL.base_jobs % jobs_csl)
-        all_jobs = jobs + base_jobs
-        all_jobs_csl = ','.join([str(job[0]) for job in all_jobs])
-        # abort if any job in the list has been purged
-        purged = self.db.query(SQL.purged_jobs % all_jobs_csl)
-        if purged[0][0] > 0 :
-            raise RuntimeError, 'purged jobs in list (%s)' % all_jobs_csl
-        # get job records
-        self.jobs = self.db.query(SQL.job_records % all_jobs_csl)
-        # get relevant volume records
-        self.volumes = self.db.query(SQL.volumes % all_jobs_csl)
-        # get files
-        self.files = self.db.query(SQL.files % (SQL.with_basejobs[self.db.driver] % (jobs_csl, jobs_csl, jobs_csl, jobs_csl)))
-        # delete temporary tables
-        self.db.query(SQL.del_temp, fetch=False)
-        self.db.query(SQL.del_temp1, fetch=False)
-
-        return self.files
-
 
 class FileSystem(Fuse) :
 
@@ -1045,7 +470,6 @@ class FileSystem(Fuse) :
         # log messages are sent to both console and syslog
         # use -o logging=level to set the log level
         # use -o syslog to enable logging to syslog
-        loghandlers = []
         self.logger = logging.getLogger('BaculaFS')
         self.loglevel = LOGGING_LEVELS.get(self.logging, logging.NOTSET)
         self.logger.setLevel(self.loglevel)
@@ -1054,7 +478,6 @@ class FileSystem(Fuse) :
         formatter = logging.Formatter("%(message)s")
         h.setFormatter(formatter)
         self.logger.addHandler(h)
-        loghandlers.append(h)
         if self.syslog :
             try :
                 h = logging.handlers.SysLogHandler('/dev/log')
@@ -1062,10 +485,9 @@ class FileSystem(Fuse) :
                 formatter = logging.Formatter("%(name)s: %(levelname)-8s - %(message)s")
                 h.setFormatter(formatter)
                 self.logger.addHandler(h)
-                loghandlers.append(h)
             except :
                 self.logger.warning(traceback.format_exc())
-        self.logfile = Logfile(self.logger, logging.DEBUG, loghandlers)
+        self.logfile = LogFile(self.logger, logging.DEBUG)
 
     
     def initialize(self):
@@ -1334,17 +756,33 @@ class FileSystem(Fuse) :
         def release(self, flags):
             self.file.close()
                                                                                                 
+def _bextract_version() :
+    '''
+    return version string of bextract,
+    return None if not runnable or version cannot be parsed
+    '''
+    version = None
+    try :
+        child = pexpect.spawn('bextract -?')
+        i = child.expect(['Version: ([^(]*) \(([^)]*)\)', pexpect.EOF])
+        if i == 0 :
+            version = '%s (%s)' % child.match.groups()
+        child.close()
+    except :
+        pass
+    return version
 
 def main():
-
+    
     usage = """
 BaculaFS: expose the Bacula catalog as a user-space file system
 
 """ + Fuse.fusage
 
-    bacula_version = bextract_version() 
+    bacula_version = _bextract_version() 
 
-    server = FileSystem(version="BaculaFS version: %s\nbextract version: %s\nPython FUSE version: %s" % (__version__, bacula_version, fuse.__version__), usage=usage)
+    server = FileSystem(version="BaculaFS version: %s\nbextract version: %s\nPython FUSE version: %s" %
+                        (__version__, bacula_version, fuse.__version__), usage=usage)
 
     server.multithreaded = True
 
@@ -1383,11 +821,11 @@ BaculaFS: expose the Bacula catalog as a user-space file system
     server.parser.add_option(mountopt="prefetch_symlinks", action="store_true", default=server.prefetch_symlinks,
                              help="extract all symbolic links upon filesystem initialization (implies prefetch_attrs) [default: %default]")
     server.parser.add_option(mountopt="prefetch_regex", metavar="REGEX", default=server.prefetch_regex,
-                             help="extract all objects that match REGEX upon filesystem initialization (implies prefetch_attrs) [default: %default]")
+                             help="extract all objects that match REGEX upon filesystem initialization (implies prefetch_attrs)")
     server.parser.add_option(mountopt="prefetch_recent", action="store_true", default=server.prefetch_recent,
                              help="extract contents of most recent non-full job upon filesystem initialization (implies prefetch_symlinks) [default: %default]")
     server.parser.add_option(mountopt="prefetch_diff", metavar="PATH", default=server.prefetch_diff,
-                             help="extract files that do not match files at PATH (hint: speeds up rsync; implies prefetch_symlinks) [default: %default]")
+                             help="extract files that do not match files at PATH (hint: speeds up rsync; implies prefetch_symlinks)")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
@@ -1408,6 +846,7 @@ BaculaFS: expose the Bacula catalog as a user-space file system
             try :
                 server.initialize()
             except :
+                traceback.print_exc()
                 server.shutdown()
                 raise
 
@@ -1419,6 +858,3 @@ BaculaFS: expose the Bacula catalog as a user-space file system
     if server.fuse_args.mount_expected() :
         server.shutdown()
 
-        
-if __name__ == '__main__':
-    main()

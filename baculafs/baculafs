@@ -1,0 +1,9 @@
+#! /usr/bin/env python
+
+'''BaculaFS mount script
+'''
+
+from FileSystem import main
+        
+if __name__ == '__main__':
+    main()
