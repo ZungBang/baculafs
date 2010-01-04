@@ -228,7 +228,7 @@ class FileSystem(Fuse) :
             # it seems that bextract does not restore mtime for symlinks
             # so we create a normal file with same mtime as stored symlink
             # (note that we only use that file if the cache path was
-            # supplied bu the user)
+            # supplied by the user)
             if rc == 0 :
                 for item in items :
                     if item[0] :
