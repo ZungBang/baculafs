@@ -775,7 +775,7 @@ def _bextract_version() :
 def main():
     
     usage = """
-BaculaFS: expose the Bacula catalog as a user-space file system
+BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
 
 """ + Fuse.fusage
 
@@ -786,7 +786,7 @@ BaculaFS: expose the Bacula catalog as a user-space file system
 
     server.multithreaded = True
 
-    server.parser.add_option(mountopt="driver", metavar="DRIVER", default=server.driver,
+    server.parser.add_option(mountopt="driver", choices=Database.drivers, metavar='|'.join(Database.drivers), default=server.driver,
                              help="database driver [default: %default]")
     server.parser.add_option(mountopt="host", metavar="HOST", default=server.host,
                              help="database server address [default: %default]")
@@ -830,8 +830,8 @@ BaculaFS: expose the Bacula catalog as a user-space file system
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
                              help="user specified cache path (hint: combine this with one of the prefetch options) [default: %default]")
-    server.parser.add_option(mountopt="logging", metavar="LEVEL", default=server.logging,
-                             help="logging level (allowed values: %s) " % ','.join(LOGGING_LEVELS.keys()) + "[default: %default]")
+    server.parser.add_option(mountopt="logging", choices=LOGGING_LEVELS.keys(), metavar='|'.join(LOGGING_LEVELS.keys()), default=server.logging,
+                             help="logging level [default: %default]")
     server.parser.add_option(mountopt="syslog", action="store_true", default=server.syslog,
                              help="log to both syslog and console [default: %default]")
 

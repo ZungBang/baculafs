@@ -101,7 +101,8 @@ USAGE
        --version              show program's version number and exit
        -h, --help             show this help message and exit
        -o opt,[opt...]        mount options
-       -o driver=DRIVER       database driver [default: sqlite3]
+       -o driver=mysql|postgresql|sqlite|sqlite3
+                              database driver [default: sqlite3]
        -o host=HOST           database server address [default: localhost]
        -o port=PORT           database server port
        -o database=PATH       database name [default: bacula]
@@ -140,9 +141,8 @@ USAGE
        -o user_cache_path=PATH
                               user specified cache path (hint: combine this with
                               one of the prefetch options) [default: none]
-       -o logging=LEVEL       logging level (allowed values:
-                              debug,info,warning,critical,error) [default:
-                              warning]
+       -o logging=debug|info|warning|critical|error
+                              logging level [default: warning]
        -o syslog              log to both syslog and console [default: False]
    
    FUSE options:

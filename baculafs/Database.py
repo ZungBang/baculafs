@@ -8,6 +8,7 @@ class Database :
     This class shields the rest of the code from the pesky details of
     actually accessing one of the supported databases.
     '''
+    drivers = [SQL.MYSQL, SQL.POSTGRESQL, SQL.SQLITE, SQL.SQLITE3]
 
     default_database = {
         SQL.MYSQL: 'bacula',
