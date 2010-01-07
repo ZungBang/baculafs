@@ -1,4 +1,4 @@
-__version__ = '0.1.1'
+__version__ = '0.1.2'
 
 import os
 import stat
@@ -227,8 +227,6 @@ class FileSystem(Fuse) :
             rc, sig = self._bextract(items)
             # it seems that bextract does not restore mtime for symlinks
             # so we create a normal file with same mtime as stored symlink
-            # (note that we only use that file if the cache path was
-            # supplied by the user)
             if rc == 0 :
                 for item in items :
                     if item[0] :
