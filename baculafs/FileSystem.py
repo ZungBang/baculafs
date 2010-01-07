@@ -1,4 +1,4 @@
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 import os
 import stat
@@ -279,19 +279,14 @@ class FileSystem(Fuse) :
         is_symlink = stat.S_ISLNK(bs.st_mode)
         found = False
         if os.path.exists(realpath) or os.path.lexists(realpath) :
-            # do not trust user supplied cache path:
             # make sure that stat info of realpath matches path
-            if self.user_cache_path :
-                s = os.lstat(realpath)
-                conds = [getattr(s, attr) == getattr(bs, attr)
-                         for attr in ['st_mode', 'st_uid', 'st_gid', 'st_size', 'st_mtime']]
-                if is_symlink :
-                    conds[-1] = (os.path.exists(symlinkpath) and
-                                 bs.st_mtime == os.stat(symlinkpath).st_mtime)
-                found = all(conds)
-            else :
-                found = True
-            if found :
+            s = os.lstat(realpath)
+            conds = [getattr(s, attr) == getattr(bs, attr)
+                     for attr in ['st_mode', 'st_uid', 'st_gid', 'st_size', 'st_mtime']]
+            if is_symlink :
+                conds[-1] = (os.path.exists(symlinkpath) and
+                             bs.st_mtime == os.stat(symlinkpath).st_mtime)
+            if all(conds) :
                 return realpath, None, None
         # generate list of volumes for path
         fileindex, jobid = self.dirs[head][tail][0:2]
