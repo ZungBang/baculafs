@@ -321,14 +321,15 @@ should note:
   configuration file is accessed via NFS
 
 
+UNSUPPORTED FEATURES
+~~~~~~~~~~~~~~~~~~~~
 
-WINDOWS FILESETS
-~~~~~~~~~~~~~~~~
+**BaculaFS** depends on ``bextract`` and thus inherits its
+limitations: 
 
-**BaculaFS** can be used with Windows backup filesets, but it does not
-reproduce any Windows specific file attributes. This is because
-``bextract`` does not extract Windows specific file attributes on
-Linux.
+- **BaculaFS** can be used with Windows filesets, but it does not
+  reproduce any Windows specific file attributes
+- Encrypted backup files are not supported
 
 BUGS
 ----
