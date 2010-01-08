@@ -427,21 +427,78 @@ class FileSystem(Fuse) :
             self._bextract_increment_counter('failures', 1)
         return (child.exitstatus, child.signalstatus)
 
+    def _group_by_volume(self, items) :
+        '''
+        return items grouped by volume
+        '''
+        # group volumes
+        vols = []
+        for item in items :
+            for v in item[-1] :
+                found = False
+                findex = v[-1]
+                for vindex in xrange(0,len(vols)) :
+                    volume = vols[vindex]
+                    if not any(map(cmp, v[:-1], volume[:-1])) :
+                        volume[-1].append(findex)
+                        found = True
+                        break
+                if not found :
+                    vols.append(v[:-1] + [[v[-1]]])
+                    
+        # compact list of file indices 
+        for volume in vols :
+            volume[-1] = list(set(volume[-1]))
+            volume[-1].sort()
+            l = len(volume[-1])
+            findex = volume[-1][0]
+            findices = [(findex, findex)]
+            for idx in volume[-1][1:] :
+                next_idx = findices[-1][-1] + 1
+                if idx == next_idx :
+                    findices[-1] = (findices[-1][0], idx)
+                else :
+                    findices.append((idx,idx))
+            volume[-1] = findices
+            volume.append(l)
+
+        # reorder volumes to ensure correct handling of
+        # files spanning multiple volumes
+        volumes = []
+        vl = len(vols)
+        for vi in xrange(0, vl) :
+            found = False
+            for vj in xrange(vi-1, -1, -1) :
+                if (volumes[vj][3] == vols[vi][3] and
+                    volumes[vj][4] == vols[vi][4] and
+                    volumes[vj][7][-1][-1] == vols[vi][7][0][0]) :
+                    volumes.insert(vj+1, vols[vi])
+                    found = True
+                    break
+            if not found :
+                volumes.append(vols[vi])
+
+        return volumes
+        
     def _write_bsr(self, items) :
         '''
         generate bsr for items to be extracted
         '''
         bsrfd, bsrpath = tempfile.mkstemp(suffix='.bsr', dir=self.cache_bsrpath, text=True)
-        for item in items :
-            for volume in item[-1] :
-                os.write(bsrfd, 'Volume="%s"\n' % volume[0])
-                os.write(bsrfd, 'MediaType="%s"\n' % volume[1])
-                os.write(bsrfd, 'Device="%s"\n' % volume[2]) 
-                os.write(bsrfd, 'VolSessionId=%d\n' % volume[3])
-                os.write(bsrfd, 'VolSessionTime=%d\n' % volume[4])
-                os.write(bsrfd, 'VolAddr=%d-%d\n' % (volume[5],volume[6]))
-                os.write(bsrfd, 'FileIndex=%d\n' % volume[7])
-                os.write(bsrfd, 'Count=1\n')
+        volumes = self._group_by_volume(items)
+        for volume in volumes :
+            os.write(bsrfd, 'Volume="%s"\n' % volume[0])
+            os.write(bsrfd, 'MediaType="%s"\n' % volume[1])
+            os.write(bsrfd, 'Device="%s"\n' % volume[2]) 
+            os.write(bsrfd, 'VolSessionId=%d\n' % volume[3])
+            os.write(bsrfd, 'VolSessionTime=%d\n' % volume[4])
+            os.write(bsrfd, 'VolAddr=%d-%d\n' % (volume[5],volume[6]))
+            for findex in volume[7] :
+                if findex[0] == findex[1] :
+                    os.write(bsrfd, 'FileIndex=%d\n' % findex[0])
+                else :
+                    os.write(bsrfd, 'FileIndex=%d-%d\n' % findex)
+            os.write(bsrfd, 'Count=%d\n' % volume[8])
         os.close(bsrfd)
         return bsrpath
 
