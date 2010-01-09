@@ -27,7 +27,7 @@ use-cases:
   queries
 - comparing backup jobs (using several mount points)
 
-Note that **BaculaFS** is a maintenance tool - it's operation may
+Note that **BaculaFS** is a maintenance tool - its operation may
 interfere with the normal operation of a live Bacula setup (see the
 LIMITATIONS_ section below).
 
