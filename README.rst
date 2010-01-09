@@ -340,9 +340,8 @@ Please report problems via the **BaculaFS** issue tracking system:
 CREDITS
 -------
 
-**BaculaFS** contains SQL queries that were adapted from Bacula
-
-Copyright (C) 2000-2008 Free Software Foundation Europe e.V.
+**BaculaFS** contains SQL queries that were adapted from Bacula,
+Copyright (C) 2000-2010 Free Software Foundation Europe e.V.
 
 LICENSE
 -------
@@ -362,4 +361,3 @@ along with this program. If not, see
 `<http://www.gnu.org/licenses/>`_.
 
 .. [*] Bacula is a registered trademark of Kern Sibbald.
-

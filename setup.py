@@ -4,7 +4,7 @@
 # Copyright (C) 2009, 2010 Avi Rozen <avi.rozen@gmail.com>
 #
 # BaculaFS contains SQL queries that were adapted from Bacula
-# Copyright (C) 2000-2008 Free Software Foundation Europe e.V.
+# Copyright (C) 2000-2010 Free Software Foundation Europe e.V.
 #
 # This file is part of BaculaFS.
 #
