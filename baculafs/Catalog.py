@@ -74,7 +74,7 @@ class Catalog :
             diff_jobs = self.db.query(SQL.temp)
             self.db.query(SQL.incr_jobs_temp % (diff_jobs[-1][1], self.datetime, self.client_id, self.fileset[1]), fetch=False)
         jobs = self.db.query(SQL.jobs)
-        self.most_recent_jobid = jobs[-1][0] if len(jobs) > 1 else -1
+        self.most_recent_jobid = jobs[-1][0] if jobs[-1][1] != 'F' else -1
         # select files from the most recent job only
         if select_recent_job and self.most_recent_jobid > 0 :
             jobs = [jobs[-1]]

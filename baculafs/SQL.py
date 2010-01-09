@@ -191,7 +191,7 @@ class SQL :
     AND FileSet.FileSet='%s'
     '''
 
-    jobs = 'SELECT DISTINCT JobId,StartTime FROM temp ORDER BY StartTime ASC'
+    jobs = 'SELECT DISTINCT JobId,Level,StartTime FROM temp ORDER BY StartTime ASC'
 
     base_jobs = '''
     SELECT DISTINCT BaseJobId
