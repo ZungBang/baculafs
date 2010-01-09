@@ -2,7 +2,7 @@
 BaculaFS
 ========
 
-BaculaFS_ - Exposes the Bacula_ catalog and storage as a Filesystem in
+BaculaFS_ - Exposes the Bacula_ [*]_ catalog and storage as a Filesystem in
 USErspace (FUSE_).
 
 .. _BaculaFS: http://code.google.com/p/baculafs
@@ -337,6 +337,13 @@ BUGS
 Please report problems via the **BaculaFS** issue tracking system:
 `<http://code.google.com/p/baculafs/issues/list>`_
 
+CREDITS
+-------
+
+**BaculaFS** contains SQL queries that were adapted from Bacula
+
+Copyright (C) 2000-2008 Free Software Foundation Europe e.V.
+
 LICENSE
 -------
 
@@ -354,5 +361,5 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see
 `<http://www.gnu.org/licenses/>`_.
 
-
+.. [*] Bacula is a registered trademark of Kern Sibbald.
 
