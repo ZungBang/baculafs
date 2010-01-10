@@ -46,6 +46,7 @@ setup(
     install_requires=['fuse-python>=0.2','pexpect>=2.3','MySQL-python>=1.2.2','psycopg2>=2.0.13'],
     classifiers = [
         "Development Status :: 3 - Alpha",
+        "Topic :: System :: Filesystems",
         "Topic :: System :: Archiving :: Backup",
         "Intended Audience :: System Administrators",
         "Environment :: No Input/Output (Daemon)",
