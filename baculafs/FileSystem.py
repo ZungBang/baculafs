@@ -139,7 +139,7 @@ class FileSystem(Fuse) :
         self._initialized = False
         
         # default option values
-        self.logging = 'warning'
+        self.logging = 'info'
         self.syslog = False
         self.driver = 'sqlite3'
         self.database = None
@@ -669,9 +669,9 @@ class FileSystem(Fuse) :
         if npf > 0 :
             self.logger.info('Prefetching %d objects ... ' % npf)
             self._extract(prefetches)
-        self.logger.info('Cache directory is: %s' % self.cache_prefix)
+        self.logger.debug('Cache directory is: %s' % self.cache_prefix)
         self.joblist = ' '.join([str(job[0]) for job in self.catalog.jobs])
-        self.logger.info('Jobs in file system: %s' % self.joblist)
+        self.logger.debug('Job ids in file system: %s' % self.joblist)
         self.logger.info('BaculaFS ready (%d files).' % len(files))
         
         self._initialized = True

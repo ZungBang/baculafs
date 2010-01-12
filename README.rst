@@ -142,7 +142,7 @@ USAGE
                               user specified cache path (hint: combine this with
                               one of the prefetch options) [default: none]
        -o logging=debug|info|warning|critical|error
-                              logging level [default: warning]
+                              logging level [default: info]
        -o syslog              log to both syslog and console [default: False]
    
    FUSE options:
