@@ -317,11 +317,12 @@ class FileSystem(Fuse) :
         volumes = [[volume[1],   # 0-Volume
                     volume[2],   # 1-MediaType
                     self.device, # 2-Device
-                    jobs[0][1],  # 3-VolSessionId
-                    jobs[0][2],  # 4-VolSessionTime
-                    (volume[5] << 32) | volume[7], # 5-VolAddr: StartAddr
-                    (volume[6] << 32) | volume[8], # 6-VolAddr: EndAddr
-                    fileindex]   # 7-FileIndex
+                    jobs[0][0],  # 3-JobId
+                    jobs[0][1],  # 4-VolSessionId
+                    jobs[0][2],  # 5-VolSessionTime
+                    (volume[5] << 32) | volume[7], # 6-VolAddr: StartAddr
+                    (volume[6] << 32) | volume[8], # 7-VolAddr: EndAddr
+                    fileindex]   # 8-FileIndex
                    for volume in self.catalog.volumes
                    if (volume[0] == jobid and 
                        volume[3] <= fileindex and
@@ -456,22 +457,22 @@ class FileSystem(Fuse) :
         return items grouped by volume
         '''
         # group volumes
-        vols = []
+        volumes = []
         for item in items :
             for v in item[-1] :
                 found = False
                 findex = v[-1]
-                for vindex in xrange(0,len(vols)) :
-                    volume = vols[vindex]
+                for vindex in xrange(0,len(volumes)) :
+                    volume = volumes[vindex]
                     if not any(map(cmp, v[:-1], volume[:-1])) :
                         volume[-1].append(findex)
                         found = True
                         break
                 if not found :
-                    vols.append(v[:-1] + [[v[-1]]])
+                    volumes.append(v[:-1] + [[v[-1]]])
                     
         # compact list of file indices 
-        for volume in vols :
+        for volume in volumes :
             volume[-1] = list(set(volume[-1]))
             volume[-1].sort()
             l = len(volume[-1])
@@ -488,19 +489,9 @@ class FileSystem(Fuse) :
 
         # reorder volumes to ensure correct handling of
         # files spanning multiple volumes
-        volumes = []
-        vl = len(vols)
-        for vi in xrange(0, vl) :
-            found = False
-            for vj in xrange(vi-1, -1, -1) :
-                if (volumes[vj][3] == vols[vi][3] and
-                    volumes[vj][4] == vols[vi][4] and
-                    volumes[vj][7][-1][-1] == vols[vi][7][0][0]) :
-                    volumes.insert(vj+1, vols[vi])
-                    found = True
-                    break
-            if not found :
-                volumes.append(vols[vi])
+        volumes.sort(cmp = lambda a,b : \
+                         (cmp(a[3],b[3]) or 
+                          cmp(a[8][-1][-1], b[8][0][0])))
 
         return volumes
         
@@ -514,15 +505,15 @@ class FileSystem(Fuse) :
             os.write(bsrfd, 'Volume="%s"\n' % volume[0])
             os.write(bsrfd, 'MediaType="%s"\n' % volume[1])
             os.write(bsrfd, 'Device="%s"\n' % volume[2]) 
-            os.write(bsrfd, 'VolSessionId=%d\n' % volume[3])
-            os.write(bsrfd, 'VolSessionTime=%d\n' % volume[4])
-            os.write(bsrfd, 'VolAddr=%d-%d\n' % (volume[5],volume[6]))
-            for findex in volume[7] :
+            os.write(bsrfd, 'VolSessionId=%d\n' % volume[4])
+            os.write(bsrfd, 'VolSessionTime=%d\n' % volume[5])
+            os.write(bsrfd, 'VolAddr=%d-%d\n' % (volume[6],volume[7]))
+            for findex in volume[8] :
                 if findex[0] == findex[1] :
                     os.write(bsrfd, 'FileIndex=%d\n' % findex[0])
                 else :
                     os.write(bsrfd, 'FileIndex=%d-%d\n' % findex)
-            os.write(bsrfd, 'Count=%d\n' % volume[8])
+            os.write(bsrfd, 'Count=%d\n' % volume[9])
         os.close(bsrfd)
         return bsrpath
 
