@@ -23,6 +23,7 @@
 # Bacula is a registered trademark of Kern Sibbald.
 
 import os
+from getpass import getpass
 
 from Base64 import *
 from SQL import *
@@ -52,6 +53,12 @@ class Database :
         self.driver = driver
         if not database :
             database = Database.default_database[self.driver]
+        # user supplied empty password -> prompt
+        if password == '' :
+            password = getpass()
+        # user supplied no password -> use empty string
+        if password == None :
+            password = ''
         if self.driver == SQL.MYSQL :
             from MySQLdb import connect
             self.connection = connect(host=host, port=port, user=username, passwd=password, db=database)

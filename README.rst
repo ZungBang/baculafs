@@ -107,7 +107,8 @@ USAGE
        -o port=PORT           database server port
        -o database=PATH       database name [default: bacula]
        -o username=USERNAME   database user name [default: bacula]
-       -o password=PASSWORD   database password
+       -o password=PASSWORD   database password (use '-o password= ' to get a
+                              password prompt)
        -o conf=PATH           storage daemon configuration file [default:
                               /etc/bacula/bacula-sd.conf]
        -o client=CLIENT       file daemon name

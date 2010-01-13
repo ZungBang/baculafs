@@ -146,7 +146,7 @@ class FileSystem(Fuse) :
         self.host = 'localhost'
         self.port = 0
         self.username = 'bacula'
-        self.password = ''
+        self.password = None
         self.conf = '/etc/bacula/bacula-sd.conf'
         self.client = ''
         self.fileset = None
@@ -862,7 +862,7 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
     server.parser.add_option(mountopt="username", metavar="USERNAME", default=server.username,
                              help="database user name [default: %default]")
     server.parser.add_option(mountopt="password", metavar="PASSWORD", default=server.password,
-                             help="database password")
+                             help="database password (use '-o password= ' to get a password prompt)")
     server.parser.add_option(mountopt="conf", metavar="PATH", default=server.conf,
                              help="storage daemon configuration file [default: %default]")
     server.parser.add_option(mountopt="client", metavar="CLIENT", default=server.client,
