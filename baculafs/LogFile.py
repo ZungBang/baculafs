@@ -38,12 +38,25 @@ class LogFile :
     def __init__(self, logger, level) :
         self.logger = logger
         self.level = level
+        self.tail = ''
 
     def write(self, message) :
-        for line in message.splitlines() :
+        lines = (self.tail + message).splitlines()
+        for line in lines[:-1] :
             self.logger.log(self.level, line)
+        if message.endswith('\n') :
+            self.logger.log(self.level, lines[-1])
+            self.tail = ''
+        elif len(lines) > 0 :
+            self.tail = lines[-1]
+        else :
+            self.tail = ''
+                                
 
-    def flush(self) :
+    def flush(self, flush_tail = False) :
+        if flush_tail and self.tail :
+            self.logger.log(self.level, self.tail)
+            self.tail = ''
         for handler in self.logger.handlers :
             handler.flush()
         

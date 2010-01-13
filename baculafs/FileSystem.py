@@ -25,6 +25,7 @@
 __version__ = '0.1.3'
 
 import os
+import sys
 import stat
 import errno
 import copy
@@ -411,6 +412,7 @@ class FileSystem(Fuse) :
             i = child.expect([self.fail_pattern, pexpect.EOF],
                              timeout=None,
                              searchwindowsize=200)
+            self.logfile.flush(flush_tail = True)
             if i == 0 :
                 # count retries
                 if missing == child.match.groups()[0] :
