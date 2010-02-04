@@ -35,6 +35,7 @@ import threading
 import traceback
 import pexpect
 import fcntl
+import time
 
 from LogFile import *
 from Database import *
@@ -163,6 +164,7 @@ class FileSystem(Fuse) :
         self.prefetch_symlinks = False
         self.prefetch_recent = False
         self.prefetch_diff = None
+        self.prefetch_difflist = None
         self.prefetch_everything = False
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
@@ -601,12 +603,14 @@ class FileSystem(Fuse) :
         self.db.close()
 
         prefetches = []
+        difflist = {}
 
         # validate prefetch conditions
         if self.prefetch_everything :
             self.prefetch_recent = False
             self.prefetch_regex = None
             self.prefetch_diff = None
+            self.prefetch_difflist = None
             self.prefetch_symlinks = True
         if self.prefetch_regex :
             try :
@@ -627,6 +631,18 @@ class FileSystem(Fuse) :
                 # can't access target directory: show traceback and ignore
                 self.logger.warning(traceback.format_exc())
                 self.prefetch_diff = None
+        if self.prefetch_difflist :
+            self.prefetch_difflist = os.path.normpath(os.path.expanduser(self.prefetch_difflist))
+            try :
+                difflistfile = open(self.prefetch_difflist, 'rt')
+                difflist = dict((' '.join(words[5:]), time.mktime(time.strptime( ' '.join(words[:5]), '%a %b %d %H:%M:%S %Y')))
+                                for words in (line.split() for line in difflistfile.readlines()))
+                difflistfile.close()
+                self.prefetch_symlinks = True
+            except :
+                # can't access/parse difflist: show traceback and ignore
+                self.logger.warning(traceback.format_exc())
+                self.prefetch_difflist = None
         if self.prefetch_recent :
             self.prefetch_symlinks = True
         if self.prefetch_symlinks :
@@ -650,7 +666,10 @@ class FileSystem(Fuse) :
                      (self.prefetch_regex and
                       regex.match(filepath)) or
                      (self.prefetch_diff and
-                      not self._match_stat(self.prefetch_diff + filepath, entry[-1])) or 
+                      not self._match_stat(self.prefetch_diff + filepath, entry[-1])) or
+                     (self.prefetch_difflist and
+                      (filepath[1:] not in difflist or
+                       difflist[filepath[1:]] != entry[-1].st_mtime)) or 
                      (self.prefetch_symlinks and
                       stat.S_ISLNK(entry[-1].st_mode)))) :
                     prefetches.append(filepath)
@@ -893,6 +912,8 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
                              help="extract contents of most recent non-full job upon filesystem initialization (implies prefetch_symlinks) [default: %default]")
     server.parser.add_option(mountopt="prefetch_diff", metavar="PATH", default=server.prefetch_diff,
                              help="extract files that do not match files at PATH (hint: speeds up rsync; implies prefetch_symlinks)")
+    server.parser.add_option(mountopt="prefetch_difflist", metavar="DIFFLIST", default=server.prefetch_difflist,
+                             help="extract files that do not match files in DIFFLIST (list line format: 'Day Mon DD hh:mm:ss YYYY PATH'; hint: format matches output of 'duplicity list-current-files -v0 target_url'; implies prefetch_symlinks)")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,

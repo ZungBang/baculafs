@@ -22,7 +22,7 @@ userspace.
 use-cases:
 
 - maintaining a remote snapshot of the files in the backup storage
-  using `rsync`_
+  using `rsync`_ or `duplicity`_
 - auditing the contents of backup jobs, without resorting to SQL
   queries
 - comparing backup jobs (using several mount points)
@@ -33,6 +33,7 @@ LIMITATIONS_ section below).
 
 
 .. _rsync: http://samba.anu.edu.au/rsync/
+.. _duplicity: http://www.nongnu.org/duplicity/
 
 
 REQUIREMENTS
@@ -136,6 +137,12 @@ USAGE
                               prefetch_symlinks) [default: False]
        -o prefetch_diff=PATH  extract files that do not match files at PATH
                               (hint: speeds up rsync; implies prefetch_symlinks)
+       -o prefetch_difflist=DIFFLIST
+                              extract files that do not match files in DIFFLIST
+                              (list line format: 'Day Mon DD hh:mm:ss YYYY PATH';
+                              hint: format matches output of 'duplicity list-
+                              current-files -v0 target_url'; implies
+                              prefetch_symlinks)
        -o prefetch_everything
                               extract everything upon filesystem initialization
                               (complete restore to cache) [default: False]
