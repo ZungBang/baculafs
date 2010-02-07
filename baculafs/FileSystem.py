@@ -635,8 +635,9 @@ class FileSystem(Fuse) :
             self.prefetch_difflist = os.path.normpath(os.path.expanduser(self.prefetch_difflist))
             try :
                 difflistfile = open(self.prefetch_difflist, 'rt')
-                difflist = dict((' '.join(words[5:]), time.mktime(time.strptime( ' '.join(words[:5]), '%a %b %d %H:%M:%S %Y')))
-                                for words in (line.split() for line in difflistfile.readlines()))
+                for line in difflistfile.readlines():
+                    date = ' '.join(line.split()[:5])
+                    difflist[line[(len(date) + 1):].strip()] = time.strptime(date, '%a %b %d %H:%M:%S %Y')
                 difflistfile.close()
                 self.prefetch_symlinks = True
             except :
@@ -668,8 +669,8 @@ class FileSystem(Fuse) :
                      (self.prefetch_diff and
                       not self._match_stat(self.prefetch_diff + filepath, entry[-1])) or
                      (self.prefetch_difflist and
-                      (filepath[1:] not in difflist or
-                       difflist[filepath[1:]] != entry[-1].st_mtime)) or 
+                      (filepath[1:] not in difflist or 
+                       difflist[filepath[1:]][:-1] != time.localtime(entry[-1].st_mtime)[:-1])) or 
                      (self.prefetch_symlinks and
                       stat.S_ISLNK(entry[-1].st_mode)))) :
                     prefetches.append(filepath)
