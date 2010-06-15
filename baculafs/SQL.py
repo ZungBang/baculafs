@@ -343,7 +343,7 @@ class SQL :
 
     volumes = '''
     SELECT JobMedia.JobId,VolumeName,MediaType,FirstIndex,LastIndex,StartFile,
-    JobMedia.EndFile,StartBlock,JobMedia.EndBlock,Copy,
+    JobMedia.EndFile,StartBlock,JobMedia.EndBlock,
     Slot,StorageId,InChanger
      FROM JobMedia,Media WHERE JobMedia.JobId IN (%s)
      AND JobMedia.MediaId=Media.MediaId ORDER BY JobMedia.JobId,VolIndex,JobMediaId
