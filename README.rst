@@ -42,24 +42,24 @@ REQUIREMENTS
 **BaculaFS** has been tested with the following set of required
 software packages:
 
-+ Bacula 3.0.2 with one of the following database backends:
++ Bacula 5.0.1 with one of the following database backends:
 
-  * SQLite_ 3.6.21
-  * MySQL_ 5.1.41
-  * PostgreSQL_ 8.3.9
+  * SQLite_ 3.6.23.1
+  * MySQL_ 5.1.47
+  * PostgreSQL_ 8.4.4
   
 + FUSE_ components:
 
-  * Python FUSE 0.2
+  * Python FUSE 0.2.1
   * FUSE library 2.8.1
   * fusermount 2.8.1
   * FUSE kernel interface 7.12
 
-+ Python_ 2.5.4, with the following additional libraries:
++ Python_ 2.5.5, with the following additional libraries:
 
   * MySQLdb_ 1.2.2
-  * psycopg2_ 2.0.13
-  * pexpect_ 2.3 
+  * psycopg2_ 2.0.14
+  * pexpect_ 2.3
   
 + attr_ extended attributes utilities 2.4.44
 
