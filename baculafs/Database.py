@@ -95,10 +95,10 @@ class Database :
 
     def query(self, sql, fetch = True) :
         '''
-        Execute SQL and fetch all results
+        Execute SQL and fetch all results as a list
         '''
         self.logger.debug(sql)
         self.cursor.execute(sql)
         if fetch :
-            return self.cursor.fetchall()
+            return list(self.cursor.fetchall())
     
