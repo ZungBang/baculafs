@@ -56,9 +56,12 @@ class Database :
         # user supplied empty password -> prompt
         if password == '' :
             password = getpass()
-        # user supplied no password -> use empty string
+        # user supplied no password -> query environment or use empty string
         if password == None :
-            password = ''
+            try:
+                password = os.environ['DATABASE_PASSWORD']
+            except KeyError:
+                password = ''
         if self.driver == SQL.MYSQL :
             from MySQLdb import connect
             self.connection = connect(host=host, port=port, user=username, passwd=password, db=database)
