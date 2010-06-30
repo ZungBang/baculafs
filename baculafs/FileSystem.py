@@ -935,7 +935,6 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
             try :
                 server.initialize()
             except :
-                traceback.print_exc()
                 server.shutdown()
                 raise
 
