@@ -55,7 +55,7 @@ software packages:
   * fusermount 2.8.1
   * FUSE kernel interface 7.12
 
-+ Python_ 2.5.5, with the following additional libraries:
++ Python_ 2.6.5, with the following additional libraries:
 
   * MySQLdb_ 1.2.2
   * psycopg2_ 2.0.14
@@ -109,7 +109,9 @@ USAGE
        -o database=PATH       database name [default: bacula]
        -o username=USERNAME   database user name [default: bacula]
        -o password=PASSWORD   database password (use '-o password= ' to get a
-                              password prompt)
+                              password prompt; if not provided, the password is
+                              read from the DATABASE_PASSWORD environment
+                              variable)
        -o conf=PATH           storage daemon configuration file [default:
                               /etc/bacula/bacula-sd.conf]
        -o client=CLIENT       file daemon name
