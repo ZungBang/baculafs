@@ -45,7 +45,7 @@ software packages:
 + Bacula 5.0.1 with one of the following database backends:
 
   * SQLite_ 3.6.23.1
-  * MySQL_ 5.1.47
+  * MySQL_ 5.1.48
   * PostgreSQL_ 8.4.4
   
 + FUSE_ components:
