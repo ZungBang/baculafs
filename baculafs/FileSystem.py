@@ -40,6 +40,7 @@ import time
 from LogFile import *
 from Database import *
 from Catalog import *
+from SQL import *
 
 # pull in some spaghetti to make this stuff work without fuse-py being installed
 try:
@@ -143,7 +144,7 @@ class FileSystem(Fuse) :
         # default option values
         self.logging = 'info'
         self.syslog = False
-        self.driver = 'sqlite3'
+        self.driver = SQL.SQLITE3
         self.database = None
         self.host = 'localhost'
         self.port = 0

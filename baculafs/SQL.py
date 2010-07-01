@@ -30,7 +30,6 @@ class SQL :
 
     MYSQL = 'mysql'
     POSTGRESQL = 'postgresql'
-    SQLITE = 'sqlite'
     SQLITE3 = 'sqlite3'
     
     clients = 'SELECT Client.Name,ClientId FROM Client'
@@ -78,21 +77,6 @@ class SQL :
     VolSessionTime INTEGER)
     ''',
         
-        SQLITE: '''
-    CREATE TEMPORARY TABLE temp (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED,
-    ClientId INTEGER UNSIGNED,
-    Level CHAR,
-    JobFiles INTEGER UNSIGNED,
-    JobBytes BIGINT UNSIGNED,
-    StartTime TEXT,
-    VolumeName TEXT,
-    StartFile INTEGER UNSIGNED,
-    VolSessionId INTEGER UNSIGNED,
-    VolSessionTime INTEGER UNSIGNED)
-    ''',
-        
         SQLITE3: '''
     CREATE TEMPORARY TABLE temp (
     JobId INTEGER UNSIGNED NOT NULL,
@@ -119,12 +103,6 @@ class SQL :
     CREATE TEMPORARY TABLE temp1 (
     JobId INTEGER NOT NULL,
     JobTDate BIGINT)
-    ''',
-        
-        SQLITE: '''
-    CREATE TEMPORARY TABLE temp1 (
-    JobId INTEGER UNSIGNED NOT NULL,
-    JobTDate BIGINT UNSIGNED)
     ''',
         
         SQLITE3: '''
@@ -279,32 +257,6 @@ class SQL :
         ORDER BY FilenameId, PathId, StartTime DESC
         -- dummy comment for chomping extra parameter: %s
         -- dummy comment for chomping extra parameter: %s
-     ''',
-        
-        SQLITE: '''
-     SELECT FileId, Job.JobId AS JobId, FileIndex, File.PathId AS PathId, 
-            File.FilenameId AS FilenameId, LStat, MD5 
-     FROM Job, File, ( 
-         SELECT MAX(JobTDate) AS JobTDate, PathId, FilenameId 
-           FROM ( 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM File JOIN Job USING (JobId) 
-              WHERE File.JobId IN (%s) 
-               UNION ALL 
-             SELECT JobTDate, PathId, FilenameId 
-               FROM BaseFiles 
-                    JOIN File USING (FileId) 
-                    JOIN Job  ON    (BaseJobId = Job.JobId) 
-              WHERE BaseFiles.JobId IN (%s) 
-            ) AS tmp GROUP BY PathId, FilenameId 
-         ) AS T1 
-     WHERE (Job.JobId IN ( 
-            SELECT DISTINCT BaseJobId FROM BaseFiles WHERE JobId IN (%s)) 
-            OR Job.JobId IN (%s)) 
-       AND T1.JobTDate = Job.JobTDate 
-       AND Job.JobId = File.JobId 
-       AND T1.PathId = File.PathId 
-       AND T1.FilenameId = File.FilenameId
      ''',
         
         SQLITE3: '''

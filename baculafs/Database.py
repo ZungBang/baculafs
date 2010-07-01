@@ -33,12 +33,11 @@ class Database :
     This class shields the rest of the code from the pesky details of
     actually accessing one of the supported databases.
     '''
-    drivers = [SQL.MYSQL, SQL.POSTGRESQL, SQL.SQLITE, SQL.SQLITE3]
+    drivers = [SQL.MYSQL, SQL.POSTGRESQL, SQL.SQLITE3]
 
     default_database = {
         SQL.MYSQL: 'bacula',
         SQL.POSTGRESQL: 'bacula',
-        SQL.SQLITE: '/var/lib/bacula/bacula.db',
         SQL.SQLITE3: '/var/lib/bacula/bacula.db'
         }
     
@@ -68,12 +67,6 @@ class Database :
         elif self.driver == SQL.POSTGRESQL :
             from psycopg2 import connect
             self.connection = connect(host=host, port=port, user=username, password=password, database=database)
-        elif self.driver == SQL.SQLITE :
-            from sqlite import connect
-            database = os.path.expanduser(database)
-            if not os.path.isfile(database) or not os.access(database, os.R_OK) :
-                raise RuntimeError, 'cannot read from file %s' % database
-            self.connection = connect(database)
         elif self.driver == SQL.SQLITE3 :
             from sqlite3 import connect
             database = os.path.expanduser(database)
