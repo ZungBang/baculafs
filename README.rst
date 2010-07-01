@@ -312,6 +312,25 @@ testing. Expect breakage.
 LIMITATIONS
 -----------
 
+COMMON PROBLEMS
+~~~~~~~~~~~~~~~
+
+**BaculaFS** will abort if no backup job was run for the
+client/fileset combination selected by the user.
+
+**BaculaFS** will abort if the target mount point is in use. Note,
+however, that mount point availability is checked by FUSE only *after*
+the (potentially lengthy) initialization of **BaculaFS**.
+
+Browsing a **BaculaFS** mount point with a file manager like Nautilus_
+is liable to be very slow. This is because the file manager reads data
+from each file being listed, in order to determine its type, generate
+a thumbnail etc. This, in turn, triggers **BaculaFS** to extract the
+files, one at a time, from the Bacula storage device to its cache
+directory. 
+
+.. _Nautilus: http://live.gnome.org/Nautilus
+
 LOCKING
 ~~~~~~~
 
