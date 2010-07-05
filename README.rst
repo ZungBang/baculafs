@@ -42,7 +42,7 @@ REQUIREMENTS
 **BaculaFS** has been tested with the following set of required
 software packages:
 
-+ Bacula 5.0.1 with one of the following database backends:
++ Bacula 5.0.2 with one of the following database backends:
 
   * SQLite_ 3.6.23.1
   * MySQL_ 5.1.48
