@@ -12,7 +12,6 @@ USErspace (FUSE_).
 Copyright |(C)| 2009, 2010 Avi Rozen <avi.rozen@gmail.com>
 
 .. contents:: 
-   :depth: 1
 
 Introduction
 ------------
