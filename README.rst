@@ -9,9 +9,12 @@ USErspace (FUSE_).
 .. _Bacula: http://www.bacula.org
 .. _FUSE: http://fuse.sourceforge.net/
 
-Copyright (C) 2009, 2010 Avi Rozen <avi.rozen@gmail.com>
+Copyright |(C)| 2009, 2010 Avi Rozen <avi.rozen@gmail.com>
 
-INTRODUCTION
+.. contents:: 
+   :depth: 1
+
+Introduction
 ------------
 
 **BaculaFS** is a tool, independent of Bacula, that represents the
@@ -29,14 +32,14 @@ use-cases:
 
 Note that **BaculaFS** is a maintenance tool - its operation may
 interfere with the normal operation of a live Bacula setup (see the
-LIMITATIONS_ section below).
+Limitations_ section below).
 
 
 .. _rsync: http://samba.anu.edu.au/rsync/
 .. _duplicity: http://www.nongnu.org/duplicity/
 
 
-REQUIREMENTS
+Requirements
 ------------
 
 **BaculaFS** has been tested with the following set of required
@@ -81,7 +84,7 @@ software packages:
 .. _attr: http://savannah.nongnu.org/projects/attr
 
 
-INSTALLATION
+Installation
 ------------
 
 Extract the source code archive to a temporary directory, ``cd`` to
@@ -91,7 +94,7 @@ this directory and run
 
         python setup.py install
 
-USAGE
+Usage
 -----
 
 ::
@@ -205,10 +208,10 @@ USAGE
        -o to_code=CHARSET	    new encoding of the file names (default: UTF-8)
    
 
-OPERATION
+Operation
 ---------
 
-INITIALIZATION
+Initialization
 ~~~~~~~~~~~~~~
 
 **BaculaFS** starts by running several SQL queries against the Bacula
@@ -225,7 +228,7 @@ specified command line options.
 
 At this point the filesystem is ready.
 
-CACHE
+Cache
 ~~~~~
 
 Opening a file for reading causes **BaculaFS** to run ``bextract`` in
@@ -252,7 +255,7 @@ The cache may be cleaned up automatically upon un-mounting the
 filesystem, with ``-o cleanup``. It may also be reused between mount
 operations with ``-o user_cache_path``.
 
-EXTENDED ATTRIBUTES
+Extended Attributes
 ~~~~~~~~~~~~~~~~~~~
 
 **BaculaFS** uses extended file attributes to expose Bacula specific
@@ -289,7 +292,7 @@ process:
    user.baculafs.bextract.state
    user.baculafs.bextract.volume
 
-MISSING VOLUMES
+Missing Volumes
 ~~~~~~~~~~~~~~~
 
 If the storage device is a tape drive then it's possible that
@@ -309,7 +312,7 @@ Please note that this feature has undergone only rudimentary
 testing. Expect breakage.
 
 
-EXAMPLES
+Examples
 ~~~~~~~~
 
 Mount the most recent backup snapshot for Bacula client ``client-fd``
@@ -360,10 +363,10 @@ un-mounting:
                  -o client=client-fd /path/to/mount/point
 
 
-LIMITATIONS
+Limitations
 -----------
 
-COMMON PROBLEMS
+Common Problems
 ~~~~~~~~~~~~~~~
 
 **BaculaFS** will abort if no backup job was run for the
@@ -382,7 +385,7 @@ directory.
 
 .. _Nautilus: http://live.gnome.org/Nautilus
 
-LOCKING
+Locking
 ~~~~~~~
 
 Access to the storage device by different instances of **BaculaFS** is
@@ -401,7 +404,7 @@ should note:
   configuration file is accessed via NFS
 
 
-UNSUPPORTED FEATURES
+Unsupported Features
 ~~~~~~~~~~~~~~~~~~~~
 
 **BaculaFS** depends on ``bextract`` and thus inherits its
@@ -411,19 +414,19 @@ limitations:
   reproduce any Windows specific file attributes
 - Encrypted backup files are not supported
 
-BUGS
+Bugs
 ----
 
 Please report problems via the **BaculaFS** issue tracking system:
 `<http://code.google.com/p/baculafs/issues/list>`_
 
-CREDITS
+Credits
 -------
 
 **BaculaFS** contains SQL queries that were adapted from Bacula,
-Copyright (C) 2000-2010 Free Software Foundation Europe e.V.
+Copyright |(C)| 2000-2010 Free Software Foundation Europe e.V.
 
-LICENSE
+License
 -------
 
 **BaculaFS** is free software: you can redistribute it and/or modify
@@ -441,3 +444,6 @@ along with this program. If not, see
 `<http://www.gnu.org/licenses/>`_.
 
 .. [*] Bacula is a registered trademark of Kern Sibbald.
+
+.. |(C)| unicode:: 0xA9 .. copyright sign
+
