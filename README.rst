@@ -309,6 +309,57 @@ Please note that this feature has undergone only rudimentary
 testing. Expect breakage.
 
 
+EXAMPLES
+~~~~~~~~
+
+Mount the most recent backup snapshot for Bacula client ``client-fd``
+and fileset ``client-fileset``; SQLite database backend (default):
+
+::
+
+        baculafs -o client=client-fd,fileset=client-fileset /path/to/mount/point
+
+Mount the contents of the specified list of backup jobs; MySQL database
+backend; prompt for password and prefetch to cache all symbolic links:
+
+::
+
+        baculafs -o joblist='1001 1003',client=client-fd,fileset=client-fileset \
+                 -o driver=mysql,password=,prefetch_symlinks /path/to/mount/point
+
+Mount the contents of the most recent backup job only:
+
+::
+
+        baculafs -o recent_job,client=client-fd,fileset=client-fileset /path/to/mount/point
+
+Mount the contents of the fileset snapshot before the specified
+date/time:
+
+::
+
+        baculafs -o datetime='2009-05-23 00:00:00' \
+                 -o client=client-fd,fileset=client-fileset /path/to/mount/point
+        
+Allow other users to access filesystem, set logging level to ``debug``
+and stay in foreground, so that ``bextract`` messages may be examined;
+assume a single Bacula fileset is defined for client ``client-fd``:
+
+::
+
+        baculafs -f -o allow_other,client=client-fd,logging=debug /path/to/mount/point
+
+Prefetch to cache files that do not exist, or whose modification time
+or size differ from those at the specified directory (i.e. files that
+would be sent to that directory using ``rsync``); and cleanup cache after
+un-mounting:
+
+::
+
+        baculafs -o prefetch_diff=/path/to/rsync/target,cleanup \
+                 -o client=client-fd /path/to/mount/point
+
+
 LIMITATIONS
 -----------
 
