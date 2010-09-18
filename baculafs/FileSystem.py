@@ -36,6 +36,7 @@ import traceback
 import pexpect
 import fcntl
 import time
+import re
 
 from LogFile import *
 from Database import *
@@ -666,7 +667,7 @@ class FileSystem(Fuse) :
                      (self.prefetch_recent and
                       file[3] == self.catalog.most_recent_jobid) or 
                      (self.prefetch_regex and
-                      regex.match(filepath)) or
+                      regex.search(filepath)) or
                      (self.prefetch_diff and
                       not self._match_stat(self.prefetch_diff + filepath, entry[-1])) or
                      (self.prefetch_difflist and
