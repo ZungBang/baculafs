@@ -198,9 +198,12 @@ class FileSystem(Fuse) :
         and dictionary with full list of decoded values
         '''
         st = fuse.Stat()
+        self.logger.debug('_bacula_stat: base64="%s"' % base64)
         lst = dict(zip(FileSystem.bacula_stat_fields, map(self.base64.decode, base64.split())))
         for k in FileSystem.bacula_stat_fields :
+            self.logger.debug('_bacula_stat: k="%s"' % k)
             if k in FileSystem.fuse_stat_fields :
+                self.logger.debug('_bacula_stat: st["%s"]="%s"' % (k, lst[k]))
                 setattr(st, k, lst[k])
         return lst, st
 
@@ -697,7 +700,9 @@ class FileSystem(Fuse) :
         self.joblist = ' '.join([str(job[0]) for job in self.catalog.jobs])
         self.logger.debug('Job ids in file system: %s' % self.joblist)
         self.logger.info('BaculaFS ready (%d files).' % len(files))
-        
+
+        self.logger.debug('__init__: self.dirs["/"]="%s"' % self.dirs["/"])
+
         self._initialized = True
 
     def shutdown(self) :
@@ -780,12 +785,18 @@ class FileSystem(Fuse) :
            needed and then cached for subsequent requests.
         3) python fuse expects atime/ctime/mtime to be positive
         '''
+        self.logger.debug('getattr: path="%s"' % path)
         head, tail = self._split(path)
+        self.logger.debug('getattr: head="%s" tail="%s"' % (head,tail))
         if head in self.dirs and tail in self.dirs[head] :
+            self.logger.debug('getattr: acquiring lock')
             self._getattr_lock.acquire()
+            self.logger.debug('getattr: self.dirs["%s"]["%s"] = %s' % (head, tail, self.dirs[head][tail]))
             attrs = self.dirs[head][tail][-1]
             # decode and cache stat info
             if not attrs :
+                self.logger.debug('getattr: self.dirs["%s"]["%s"][-3] = "%s"' % (head,tail,self.dirs[head][tail][-3]))
+                self.logger.debug('getattr: self._bacula_stat("%s")="%s"' % (self.dirs[head][tail][-3], self._bacula_stat(self.dirs[head][tail][-3])))
                 self.dirs[head][tail] = self.dirs[head][tail][:-1] + self._bacula_stat(self.dirs[head][tail][-3])
                 attrs = self.dirs[head][tail][-1]
             # zero negative timestamps
@@ -794,9 +805,11 @@ class FileSystem(Fuse) :
                 if t < 0 :
                     self.logger.warning('%s has negative timestamp %s=%d, will use 0' % (path, a, t))
                     setattr(attrs, a, 0)
+            self.logger.debug('getattr: releasing lock')                                  
             self._getattr_lock.release()
             return attrs
         else:
+            self.logger.debug('getattr: path not found')
             return -errno.ENOENT
     
     def readdir(self, path, offset):
