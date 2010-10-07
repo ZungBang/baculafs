@@ -99,7 +99,7 @@ def touch(fname, times = None):
 
 class FileSystem(Fuse) :
 
-    null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2, st_ino = -1)
+    null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2)
 
     bacula_stat_fields = ['st_dev',
                           'st_ino',
@@ -118,7 +118,7 @@ class FileSystem(Fuse) :
                           'st_flags',
                           'st_streamid']
 
-    fuse_stat_fields = dir(fuse.Stat())
+    fuse_stat_fields = list(set([f for f in dir(fuse.Stat()) if f.startswith('st_')]))
 
     xattr_prefix = 'user.baculafs.'
     xattr_fields = ['FileIndex', 'JobId', 'LStat', 'MD5']
@@ -134,7 +134,6 @@ class FileSystem(Fuse) :
         '''
         Initialize filesystem
         '''
-        
         self._extract_lock = threading.Lock()
         self._getattr_lock = threading.Lock()
         self._bextract_status_lock = threading.Lock()
@@ -786,6 +785,7 @@ class FileSystem(Fuse) :
         3) python fuse expects atime/ctime/mtime to be positive
         '''
         self.logger.debug('getattr: path="%s"' % path)
+        self.logger.debug('getattr: fuse_stat_fields=%s' % self.fuse_stat_fields)
         head, tail = self._split(path)
         self.logger.debug('getattr: head="%s" tail="%s"' % (head,tail))
         if head in self.dirs and tail in self.dirs[head] :
