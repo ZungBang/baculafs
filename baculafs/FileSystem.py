@@ -27,6 +27,7 @@ __version__ = '0.1.6'
 import os
 import sys
 import stat
+import posix
 import errno
 import copy
 import tempfile
@@ -99,7 +100,8 @@ def touch(fname, times = None):
 
 class FileSystem(Fuse) :
 
-    null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2, st_ino = -1)
+    # (st_mode, st_ino, st_dev, st_nlink, st_uid, st_gid, st_size, st_atime, st_mtime, st_ctime)
+    null_stat = posix.stat_result((stat.S_IFDIR | 0755, 0, 0, 2, 0, 0, 0, 0, 0, 0))
 
     bacula_stat_fields = ['st_dev',
                           'st_ino',
@@ -118,7 +120,7 @@ class FileSystem(Fuse) :
                           'st_flags',
                           'st_streamid']
 
-    fuse_stat_fields = dir(fuse.Stat())
+    fuse_stat_fields = [attr for attr in dir(posix.stat_result) if attr.startswith('st_')]
 
     xattr_prefix = 'user.baculafs.'
     xattr_fields = ['FileIndex', 'JobId', 'LStat', 'MD5']
