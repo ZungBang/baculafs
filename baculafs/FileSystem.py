@@ -22,7 +22,7 @@
 #
 # Bacula is a registered trademark of Kern Sibbald.
 
-__version__ = '0.1.6'
+__version__ = '0.1.7'
 
 import os
 import sys
