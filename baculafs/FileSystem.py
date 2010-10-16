@@ -796,7 +796,6 @@ class FileSystem(Fuse) :
         3) python fuse expects atime/ctime/mtime to be positive
         '''
         self.logger.debug('getattr: path="%s"' % path)
-        self.logger.debug('getattr: fuse_stat_fields=%s' % self.fuse_stat_fields)
         head, tail = self._split(path)
         self.logger.debug('getattr: head="%s" tail="%s"' % (head,tail))
         if head in self.dirs and tail in self.dirs[head] :
@@ -818,6 +817,7 @@ class FileSystem(Fuse) :
                     setattr(attrs, a, 0)
             self.logger.debug('getattr: releasing lock')                                  
             self._getattr_lock.release()
+            self.logger.debug('getattr: attrs=%s' % [(attr,getattr(attrs,attr)) for attr in dir(attrs) if attr.startswith('st_')])
             return attrs
         else:
             self.logger.debug('getattr: path not found')
