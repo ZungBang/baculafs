@@ -22,7 +22,7 @@
 #
 # Bacula is a registered trademark of Kern Sibbald.
 
-__version__ = '0.1.6'
+__version__ = '0.1.7'
 
 import os
 import sys
@@ -99,7 +99,18 @@ def touch(fname, times = None):
 
 class FileSystem(Fuse) :
 
-    null_stat = fuse.Stat(st_mode = stat.S_IFDIR | 0755, st_nlink = 2)
+    null_stat = fuse.Stat(st_mode=stat.S_IFDIR | 0755, 
+                          st_ino=0, 
+                          st_dev=0, 
+                          st_nlink=2, 
+                          st_uid=0, 
+                          st_gid=0, 
+                          st_size=0, 
+                          st_atime=0, 
+                          st_mtime=0, 
+                          st_ctime=0,
+                          st_blksize=0,
+                          st_rdev=0)
 
     bacula_stat_fields = ['st_dev',
                           'st_ino',
@@ -118,7 +129,7 @@ class FileSystem(Fuse) :
                           'st_flags',
                           'st_streamid']
 
-    fuse_stat_fields = list(set([f for f in dir(fuse.Stat()) if f.startswith('st_')]))
+    fuse_stat_fields = [attr for attr in dir(null_stat) if attr.startswith('st_')]
 
     xattr_prefix = 'user.baculafs.'
     xattr_fields = ['FileIndex', 'JobId', 'LStat', 'MD5']
