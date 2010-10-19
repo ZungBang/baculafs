@@ -289,7 +289,7 @@ class SQL :
     SELECT JobId,VolSessionId,VolSessionTime,
     PoolId,StartTime,EndTime,JobFiles,JobBytes,JobTDate,Job,JobStatus,
     Type,Level,ClientId,Name,PriorJobId,RealEndTime,FileSetId,
-    SchedTime,RealEndTime,ReadBytes,HasBase 
+    SchedTime,RealEndTime,HasBase 
     FROM Job WHERE JobId IN (%s)
     '''
 
