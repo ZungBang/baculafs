@@ -760,7 +760,8 @@ class FileSystem(Fuse) :
             n in FileSystem.xattr_fields) :
             val = str(self.dirs[head][tail][FileSystem.xattr_fields.index(n)])
             if n == 'MD5' and val != '0':
-                val = binascii.b2a_hex(binascii.a2b_base64(val+'='*((len(val)+1)%3)+'\n')) # padding
+                l = len(val)
+                val = binascii.b2a_hex(binascii.a2b_base64(val+'='*((l*3+8)/3-l)+'\n')) # padding
         # attribute not found
         if val == None :
             return -errno.ENODATA
