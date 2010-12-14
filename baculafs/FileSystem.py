@@ -37,6 +37,7 @@ import pexpect
 import fcntl
 import time
 import re
+import binascii
 
 from LogFile import *
 from Database import *
@@ -526,7 +527,8 @@ class FileSystem(Fuse) :
             os.write(bsrfd, 'Device="%s"\n' % volume[2]) 
             os.write(bsrfd, 'VolSessionId=%d\n' % volume[4])
             os.write(bsrfd, 'VolSessionTime=%d\n' % volume[5])
-            os.write(bsrfd, 'VolAddr=%d-%d\n' % (volume[6],volume[7]))
+            if not self.bsr_compat :
+                os.write(bsrfd, 'VolAddr=%d-%d\n' % (volume[6],volume[7]))
             for findex in volume[8] :
                 if findex[0] == findex[1] :
                     os.write(bsrfd, 'FileIndex=%d\n' % findex[0])
@@ -574,7 +576,7 @@ class FileSystem(Fuse) :
         self.logfile = LogFile(self.logger, logging.DEBUG)
 
     
-    def initialize(self):
+    def initialize(self, version):
         '''
         initialize database, catalog
         '''
@@ -595,6 +597,10 @@ class FileSystem(Fuse) :
         self.cache_symlinks = os.path.normpath(self.cache_prefix + '/symlinks')
         makedirs(self.cache_symlinks)
 
+        # test for old version (2.x) of bacula
+        self.bsr_compat = int(version[0]) < 3
+        if self.bsr_compat :
+            self.logger.debug('Detected old Bacula: %s' % version)
         # test access to sd conf file
         open(self.conf, 'r').close()
         # init bextract failure pattren
@@ -757,6 +763,9 @@ class FileSystem(Fuse) :
             len(self.dirs[head][tail]) != 1 and
             n in FileSystem.xattr_fields) :
             val = str(self.dirs[head][tail][FileSystem.xattr_fields.index(n)])
+            if n == 'MD5' and val != '0':
+                l = len(val)
+                val = binascii.b2a_hex(binascii.a2b_base64(val+'='*((l*3+8)/3-l)+'\n')) # padding
         # attribute not found
         if val == None :
             return -errno.ENODATA
@@ -959,7 +968,7 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
             # we initialize before main (i.e. not in fsinit) so that
             # any failure here aborts the mount
             try :
-                server.initialize()
+                server.initialize(bacula_version)
             except :
                 server.shutdown()
                 raise
