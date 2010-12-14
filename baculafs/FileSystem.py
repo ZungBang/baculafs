@@ -836,13 +836,18 @@ class FileSystem(Fuse) :
         '''
         read directory entries
         '''
+        self.logger.debug('readdir: path="%s"' % path)
         path = path if path.endswith('/') else path+'/'
         for key in ['.','..'] :
+            self.logger.debug('readdir: Direntry("%s")' % key)
             yield fuse.Direntry(key)
         for key in self.dirs[path].keys() :
+            self.logger.debug('readdir: considering key "%s"' % key)
             if len(key) > 0:
+                self.logger.debug('readdir: processing key "%s"' % key)
                 bs = self.getattr(path + key)
                 ino = bs.st_ino if bs.st_ino != 0 else -1
+                self.logger.debug('readdir: Direntry("%s",ino=%d)' % (key, ino))
                 yield fuse.Direntry(key, ino=ino)
             
     def readlink(self, path):
