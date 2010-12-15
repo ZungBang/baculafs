@@ -846,7 +846,10 @@ class FileSystem(Fuse) :
             if len(key) > 0:
                 self.logger.debug('readdir: processing key "%s"' % key)
                 bs = self.getattr(path + key)
-                ino = bs.st_ino if bs.st_ino != 0 else -1
+                if 'use_ino' in self.fuse_args.optlist:
+                    ino = bs.st_ino if bs.st_ino != 0 else -1
+                else :
+                    ino = 0
                 self.logger.debug('readdir: Direntry("%s",ino=%d)' % (key, ino))
                 yield fuse.Direntry(key, ino=ino)
             
