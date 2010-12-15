@@ -829,7 +829,10 @@ class FileSystem(Fuse) :
         for key in self.dirs[path].keys() :
             if len(key) > 0:
                 bs = self.getattr(path + key)
-                ino = bs.st_ino if bs.st_ino != 0 else -1
+                if 'use_ino' in self.fuse_args.optlist:
+                    ino = bs.st_ino if bs.st_ino != 0 else -1
+                else :
+                    ino = 0
                 yield fuse.Direntry(key, ino=ino)
             
     def readlink(self, path):
