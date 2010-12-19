@@ -16,9 +16,9 @@ Copyright |(C)| 2009, 2010 Avi Rozen <avi.rozen@gmail.com>
 Introduction
 ------------
 
-**BaculaFS** is a tool, independent of Bacula, that represents the
-Bacula catalog and backup storage media as a read-only filesystem in
-userspace.
+**BaculaFS** is a tool, developed independently of Bacula, that
+represents the Bacula catalog and backup storage media as a read-only
+filesystem in userspace.
 
 **BaculaFS** is specifically designed to cater for the following
 use-cases:
@@ -268,6 +268,10 @@ are all grouped in the ``user.baculafs`` namespace:
    user.baculafs.LStat
    user.baculafs.MD5
 
+Note that ``user.baculafs.MD5`` shows whatever digest Bacula was
+configured to calculate for the file, be it MD5, SHA1, SHA256 or
+SHA512.
+
 The root directory has several more attributes, that expose filesystem
 instance-specific information:
 
@@ -412,6 +416,52 @@ limitations:
 - **BaculaFS** can be used with Windows filesets, but it does not
   reproduce any Windows specific file attributes
 - Encrypted backup files are not supported
+- **BaculaFS** must be started with enough permissions (typically as
+  ``root``) in order to allow ``bextract`` to extract files from the
+  Bacula storage
+
+Changelog
+---------
+**Version 0.1.7 (unreleased)**
+
+- fixed: compatibility issues with bacula v2.4.4 and FUSE 7.8
+- modified: decode value of user.baculafs.MD5 extended file attribute
+- added: changelog to README
+
+**Version 0.1.6 (2010-09-19)**
+
+- fixed cache prefetch by regex
+
+**Version 0.1.5 (2010-07-06)**
+
+- fixed: removed reference to obsolete db field Copy
+- fixed: recent_job option with MySQL
+- added: read database password from environment variable DATABASE_PASSWORD
+- added: usage examples to README
+
+**Version 0.1.4 (2010-02-07)**
+
+- added: cache prefetch based on duplicity file listing
+
+**Version 0.1.3 (2010-01-13)**
+
+- fixed: (again) prefetch restore of files split between volumes
+- fixed: missing import sys
+- fixed: spurious linebreaks in debug log
+
+**Version 0.1.2 (2010-01-13)**
+
+- fixed: prefetch_recent when joblist contains a single non full job
+- fixed: prefetch restore of files split between volumes
+- added: copyright, trademark and license blurbs
+
+**Version 0.1.1 (2010-01-07)**
+
+- workaround: subtle extraction bug (fix forthcoming)
+
+**Version 0.1.1 (2010-01-06)**
+
+- initial public release
 
 Bugs
 ----
