@@ -181,6 +181,8 @@ class FileSystem(Fuse) :
         self.prefetch_diff = None
         self.prefetch_difflist = None
         self.prefetch_everything = False
+        self.use_ino = False
+        self.max_ino = 0
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
 
         self._bextract_status = copy.deepcopy(FileSystem.bextract_done)
@@ -230,6 +232,19 @@ class FileSystem(Fuse) :
             self.dirs[head][tail] = (FileSystem.null_stat,)
         self._add_parent_dirs(head)
 
+    def _update_inodes(self, head) : 
+        '''
+        generate unique st_ino for each missing st_ino
+        '''
+        for tail in self.dirs[head] :
+            if self.dirs[head][tail][-1].st_ino == 0 :
+                if len(self.dirs[head][tail]) == 1:
+                    self.dirs[head][tail] = (copy.deepcopy(FileSystem.null_stat),)
+                self.max_ino += 1
+                self.dirs[head][tail][-1].st_ino = self.max_ino
+            subdir = '%s%s/' % (head, tail)
+            if subdir in self.dirs :
+                self._update_inodes(subdir)
     
     def _extract(self, path_list) :
         '''
@@ -574,7 +589,6 @@ class FileSystem(Fuse) :
                 self.logger.warning(traceback.format_exc())
         self.logfile = LogFile(self.logger, logging.DEBUG)
 
-    
     def initialize(self, version):
         '''
         initialize database, catalog
@@ -668,6 +682,9 @@ class FileSystem(Fuse) :
             self.prefetch_symlinks = True
         if self.prefetch_symlinks :
             self.prefetch_attrs = True
+        if 'use_ino' in self.fuse_args.optlist:
+            self.use_ino = True
+            self.prefetch_attrs = True # must figure out max st_ino
 
         for file in files :
             head = file[0]
@@ -678,6 +695,10 @@ class FileSystem(Fuse) :
             # make file entry
             if self.prefetch_attrs :
                 entry = file[2:] + self._bacula_stat(file[-2])
+                # find max st_ino
+                if self.use_ino:
+                    if entry[-1].st_ino > self.max_ino :
+                        self.max_ino = entry[-1].st_ino
                 # detemine if we need to prefetch this entry
                 filepath = head + tail
                 if (not stat.S_ISDIR(entry[-1].st_mode) and
@@ -707,6 +728,10 @@ class FileSystem(Fuse) :
             # and finally
             self.dirs[head][tail] = entry
 
+        # fix st_ino
+        if self.use_ino:
+            self._update_inodes('/')
+            
         npf = len(prefetches)
         if npf > 0 :
             self.logger.info('Prefetching %d objects ... ' % npf)
@@ -829,9 +854,9 @@ class FileSystem(Fuse) :
             yield fuse.Direntry(key)
         for key in self.dirs[path].keys() :
             if len(key) > 0:
-                bs = self.getattr(path + key)
-                if 'use_ino' in self.fuse_args.optlist:
-                    ino = bs.st_ino if bs.st_ino != 0 else -1
+                if self.use_ino:
+                    bs = self.getattr(path + key)
+                    ino = bs.st_ino
                 else :
                     ino = 0
                 yield fuse.Direntry(key, ino=ino)
