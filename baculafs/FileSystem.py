@@ -170,6 +170,7 @@ class FileSystem(Fuse) :
         self.datetime = None
         self.recent_job = False
         self.joblist = None
+        self.cache_prefix = None
         self.user_cache_path = None
         self.cleanup = False
         self.move_root = False
@@ -721,7 +722,7 @@ class FileSystem(Fuse) :
         '''
         remove cache directory if required
         '''
-        if self.cleanup and not self.user_cache_path :
+        if self.cleanup and not self.user_cache_path and self.cache_prefix :
             self.logger.info('removing cache directory: %s' % self.cache_prefix)
             shutil.rmtree(self.cache_prefix, ignore_errors = True)
         
