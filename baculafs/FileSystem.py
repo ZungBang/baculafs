@@ -180,6 +180,7 @@ class FileSystem(Fuse) :
         self.prefetch_recent = False
         self.prefetch_diff = None
         self.prefetch_difflist = None
+        self.prefetch_list = None
         self.prefetch_everything = False
         self.use_ino = False
         self.max_ino = 0
@@ -645,6 +646,7 @@ class FileSystem(Fuse) :
             self.prefetch_regex = None
             self.prefetch_diff = None
             self.prefetch_difflist = None
+            self.prefetch_list = None
             self.prefetch_symlinks = True
         if self.prefetch_regex :
             try :
@@ -668,7 +670,7 @@ class FileSystem(Fuse) :
         if self.prefetch_difflist :
             self.prefetch_difflist = os.path.normpath(os.path.expanduser(self.prefetch_difflist))
             try :
-                difflistfile = open(self.prefetch_difflist, 'rt')
+                difflistfile = sys.stdin if self.prefetch_difflist == '-' else open(self.prefetch_difflist, 'rt')
                 for line in difflistfile.readlines():
                     date = ' '.join(line.split()[:5])
                     difflist[line[(len(date) + 1):].strip()] = time.strptime(date, '%a %b %d %H:%M:%S %Y')
@@ -678,6 +680,17 @@ class FileSystem(Fuse) :
                 # can't access/parse difflist: show traceback and ignore
                 self.logger.warning(traceback.format_exc())
                 self.prefetch_difflist = None
+        if self.prefetch_list :
+            self.prefetch_list = os.path.normpath(os.path.expanduser(self.prefetch_list))
+            try :
+                listfile = sys.stdin if self.prefetch_list == '-' else open(self.prefetch_list, 'rt')
+                matchlist = [line.strip() for line in listfile.readlines()]
+                listfile.close()
+                self.prefetch_symlinks = True
+            except :
+                # can't access/parse list: show traceback and ignore
+                self.logger.warning(traceback.format_exc())
+                self.prefetch_list = None
         if self.prefetch_recent :
             self.prefetch_symlinks = True
         if self.prefetch_symlinks :
@@ -712,6 +725,8 @@ class FileSystem(Fuse) :
                      (self.prefetch_difflist and
                       (filepath[1:] not in difflist or 
                        difflist[filepath[1:]][:-1] != time.localtime(entry[-1].st_mtime)[:-1])) or 
+                     (self.prefetch_list and
+                      filepath[1:] in matchlist) or
                      (self.prefetch_symlinks and
                       stat.S_ISLNK(entry[-1].st_mode)))) :
                     prefetches.append(filepath)
@@ -965,7 +980,9 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
     server.parser.add_option(mountopt="prefetch_diff", metavar="PATH", default=server.prefetch_diff,
                              help="extract files that do not match files at PATH (hint: speeds up rsync; implies prefetch_symlinks)")
     server.parser.add_option(mountopt="prefetch_difflist", metavar="DIFFLIST", default=server.prefetch_difflist,
-                             help="extract files that do not match files in DIFFLIST (list line format: 'Day Mon DD hh:mm:ss YYYY PATH'; hint: format matches output of 'duplicity list-current-files -v0 target_url'; implies prefetch_symlinks)")
+                             help="extract files that do not match files in DIFFLIST (list line format: 'Day Mon DD hh:mm:ss YYYY PATH'; use '-' to read from standard input; hint: format matches output of 'duplicity list-current-files -v0 target_url'; implies prefetch_symlinks)")
+    server.parser.add_option(mountopt="prefetch_list", metavar="LIST", default=server.prefetch_list,
+                             help="extract files that match files in LIST (list should contains one absolute file path per line; use '-' to read from standard input; implies prefetch_symlinks)")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
