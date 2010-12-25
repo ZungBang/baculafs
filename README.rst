@@ -144,8 +144,12 @@ Usage
        -o prefetch_difflist=DIFFLIST
                               extract files that do not match files in DIFFLIST
                               (list line format: 'Day Mon DD hh:mm:ss YYYY PATH';
-                              hint: format matches output of 'duplicity list-
-                              current-files -v0 target_url'; implies
+                              use '-' to read from standard input; hint: format
+                              matches output of 'duplicity list-current-files -v0
+                              target_url'; implies prefetch_symlinks)
+       -o prefetch_list=LIST  extract files that match files in LIST (list should
+                              contains one absolute file path per line; use '-'
+                              to read from standard input; implies
                               prefetch_symlinks)
        -o prefetch_everything
                               extract everything upon filesystem initialization
@@ -425,7 +429,9 @@ Changelog
 **Version 0.1.7 (unreleased)**
 
 - fixed: compatibility issues with bacula v2.4.4 and FUSE 7.8
+- fixed: synthesize missing inode numbers with -o use_ino
 - modified: decode value of user.baculafs.MD5 extended file attribute
+- added: cache prefetch specified list of files
 - added: changelog to README
 
 **Version 0.1.6 (2010-09-19)**
