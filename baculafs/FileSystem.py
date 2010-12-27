@@ -182,6 +182,10 @@ class FileSystem(Fuse) :
         self.prefetch_difflist = None
         self.prefetch_list = None
         self.prefetch_everything = False
+        self.batch_mode = False
+        self.batch_list = False
+        self.batch_bsr = False
+        self.batch_extract = False
         self.use_ino = False
         self.max_ino = 0
         self.dirs = { '/': { '': (FileSystem.null_stat,) } }
@@ -285,7 +289,7 @@ class FileSystem(Fuse) :
             rc, sig = self._bextract(items)
             # it seems that bextract does not restore mtime for symlinks
             # so we create a normal file with same mtime as stored symlink
-            if rc == 0 :
+            if rc == 0 and not self.batch_mode :
                 for item in items :
                     if item[0] :
                         symlinkfile = item[0][0]
@@ -421,8 +425,31 @@ class FileSystem(Fuse) :
         '''
         extract list of items from Bacula storage device
         '''
+        if self.batch_list :
+            for item in items :
+                print item[1]
+            if (not self.batch_bsr and
+                not self.batch_extract) :
+                return (0, 0)
+
         bsrpath = self._write_bsr(items)
-        cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath, self.conf, self.device, self.cache_path)
+
+        if self.batch_bsr :
+            bsrfile = open(bsrpath, 'rt')
+            for line in bsrfile :
+                sys.stdout.write(line)
+            sys.stdout.flush()
+            bsrfile.close()
+            if not self.batch_extract :
+                return (0, 0)
+
+        if self.batch_extract :
+            makedirs(self.fuse_args.mountpoint)
+        
+        cmd = 'bextract -b "%s" -c "%s" "%s" "%s"' % (bsrpath,
+                                                      self.conf,
+                                                      self.device,
+                                                      self.cache_path if not self.batch_extract else self.fuse_args.mountpoint)
         self.logger.debug(cmd)
             
         self._bextract_set_status({'path': items[0][1],
@@ -590,13 +617,22 @@ class FileSystem(Fuse) :
                 self.logger.warning(traceback.format_exc())
         self.logfile = LogFile(self.logger, logging.DEBUG)
 
-    def initialize(self, version):
+    def initialize(self, version) :
         '''
         initialize database, catalog
         '''
 
         self._setup_logging()
 
+        # batch mode
+        self.batch_mode = (self.batch_list or
+                           self.batch_bsr or
+                           self.batch_extract)
+        # disable INFO level logging in batch mode
+        if self.batch_mode and self.loglevel == logging.INFO :
+            self.loglevel = logging.WARNING
+        self.logger.setLevel(self.loglevel)
+        
         self.logger.info('Populating file system ... ')
 
         # setup cache
@@ -985,6 +1021,12 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
                              help="extract files that match files in LIST (list should contains one absolute file path per line; use '-' to read from standard input; implies prefetch_symlinks)")
     server.parser.add_option(mountopt="prefetch_everything", action="store_true", default=server.prefetch_everything,
                              help="extract everything upon filesystem initialization (complete restore to cache) [default: %default]")
+    server.parser.add_option(mountopt="batch_list", action="store_true", default=server.batch_list,
+                             help="list files to be prefetched and exit [default: %default]")
+    server.parser.add_option(mountopt="batch_bsr", action="store_true", default=server.batch_bsr,
+                             help="dump contnets of bsr file for extracting prefetched files and exit [default: %default]")
+    server.parser.add_option(mountopt="batch_extract", action="store_true", default=server.batch_extract,
+                             help="extract prefetched files to mount point and exit [default: %default]")
     server.parser.add_option(mountopt="user_cache_path", metavar="PATH", default=server.user_cache_path,
                              help="user specified cache path (hint: combine this with one of the prefetch options) [default: %default]")
     server.parser.add_option(mountopt="logging", choices=LOGGING_LEVELS.keys(), metavar='|'.join(LOGGING_LEVELS.keys()), default=server.logging,
@@ -1006,7 +1048,8 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
                 server.shutdown()
                 raise
 
-    server.main()
+    if not server.batch_mode :
+        server.main()
 
     # we shutdown after main, i.e. not in fsshutdown, because
     # calling fsshutdown with multithreaded==True seems to cause

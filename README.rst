@@ -144,12 +144,22 @@ Usage
        -o prefetch_difflist=DIFFLIST
                               extract files that do not match files in DIFFLIST
                               (list line format: 'Day Mon DD hh:mm:ss YYYY PATH';
-                              hint: format matches output of 'duplicity list-
-                              current-files -v0 target_url'; implies
+                              use '-' to read from standard input; hint: format
+                              matches output of 'duplicity list-current-files -v0
+                              target_url'; implies prefetch_symlinks)
+       -o prefetch_list=LIST  extract files that match files in LIST (list should
+                              contains one absolute file path per line; use '-'
+                              to read from standard input; implies
                               prefetch_symlinks)
        -o prefetch_everything
                               extract everything upon filesystem initialization
                               (complete restore to cache) [default: False]
+       -o batch_list          list files to be prefetched and exit [default:
+                              False]
+       -o batch_bsr           dump contnets of bsr file for extracting prefetched
+                              files and exit [default: False]
+       -o batch_extract       extract prefetched files to mount point and exit
+                              [default: False]
        -o user_cache_path=PATH
                               user specified cache path (hint: combine this with
                               one of the prefetch options) [default: none]
@@ -253,6 +263,23 @@ For example:
 The cache may be cleaned up automatically upon un-mounting the
 filesystem, with ``-o cleanup``. It may also be reused between mount
 operations with ``-o user_cache_path``.
+
+Batch Mode
+~~~~~~~~~~
+
+**BaculaFS** may be used in *batch mode* with ``-o batch_extract`` in
+order to extract files from the Bacula storage device and then exit
+without mounting the filesystem. The mountpoint specified at the
+command line is then treated as the destination directory for
+extracted files.
+
+The list of files, to be extracted in batch mode, is determined by the
+various cache prefetch options, and may be dumped with ``-o
+batch_list``.
+
+The bootstrap file that is generated, in order to extract the files,
+can also be dumped to standard output with ``-o batch_bsr``.
+
 
 Extended Attributes
 ~~~~~~~~~~~~~~~~~~~
@@ -425,8 +452,11 @@ Changelog
 **Version 0.1.7 (unreleased)**
 
 - fixed: compatibility issues with bacula v2.4.4 and FUSE 7.8
+- fixed: synthesize missing inode numbers with -o use_ino
 - modified: decode value of user.baculafs.MD5 extended file attribute
+- added: cache prefetch specified list of files
 - added: changelog to README
+- added: batch extract mode
 
 **Version 0.1.6 (2010-09-19)**
 
