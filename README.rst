@@ -392,7 +392,19 @@ un-mounting:
         baculafs -o prefetch_diff=/path/to/rsync/target,cleanup \
                  -o client=client-fd /path/to/mount/point
 
+Batch update a snapshot of the current files in backup (the filesystem
+is *not* mounted):
 
+::
+
+        baculafs -o batch_extract,prefetch_diff=/path/to/snapshot,cleanup \
+                 -o client=client-fd /path/to/snapshot/
+
+(this is not as accurate as mounting the filesystem, like in the
+previous example, and then updating the snapshot with ``rsync`` - but
+it is faster).
+
+                 
 Limitations
 -----------
 
