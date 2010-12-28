@@ -762,7 +762,7 @@ class FileSystem(Fuse) :
                       (filepath[1:] not in difflist or 
                        difflist[filepath[1:]][:-1] != time.localtime(entry[-1].st_mtime)[:-1])) or 
                      (self.prefetch_list and
-                      filepath[1:] in matchlist) or
+                      filepath in matchlist) or
                      (self.prefetch_symlinks and
                       stat.S_ISLNK(entry[-1].st_mode)))) :
                     prefetches.append(filepath)
