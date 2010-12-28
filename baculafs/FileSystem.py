@@ -631,7 +631,7 @@ class FileSystem(Fuse) :
         # disable INFO level logging in batch mode
         if self.batch_mode and self.loglevel == logging.INFO :
             self.loglevel = logging.WARNING
-        self.logger.setLevel(self.loglevel)
+            self.logger.setLevel(self.loglevel)
         
         self.logger.info('Populating file system ... ')
 
