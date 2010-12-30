@@ -461,7 +461,7 @@ limitations:
 
 Changelog
 ---------
-**Version 0.1.7 (unreleased)**
+**Version 0.1.7 (2010-12-30)**
 
 - fixed: compatibility issues with bacula v2.4.4 and FUSE 7.8
 - fixed: synthesize missing inode numbers with -o use_ino
