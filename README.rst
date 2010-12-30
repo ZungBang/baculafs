@@ -459,6 +459,7 @@ limitations:
   ``root``) in order to allow ``bextract`` to extract files from the
   Bacula storage
 
+  
 Changelog
 ---------
 **Version 0.1.7 (2010-12-30)**
@@ -504,6 +505,23 @@ Changelog
 **Version 0.1.1 (2010-01-06)**
 
 - initial public release
+
+SOURCE CODE
+-----------
+
+SNAPSHOT
+~~~~~~~~
+
+**BaculaFS** current source code snapshot is available at the Python
+Package Index:
+`<http://pypi.python.org/pypi/BaculaFS>`_
+
+REPOSITORY
+~~~~~~~~~~
+
+**BaculaFS** development source code may be cloned from its public Git
+repository at `<http://github.com/ZungBang/baculafs/tree>`_
+
 
 Bugs
 ----
