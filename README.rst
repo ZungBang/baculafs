@@ -506,17 +506,17 @@ Changelog
 
 - initial public release
 
-SOURCE CODE
+Source Code
 -----------
 
-SNAPSHOT
+Snapshot
 ~~~~~~~~
 
 **BaculaFS** current source code snapshot is available at the Python
 Package Index:
 `<http://pypi.python.org/pypi/BaculaFS>`_
 
-REPOSITORY
+Repository
 ~~~~~~~~~~
 
 **BaculaFS** development source code may be cloned from its public Git
