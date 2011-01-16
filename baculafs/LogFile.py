@@ -31,33 +31,31 @@ LOGGING_LEVELS = {'debug': logging.DEBUG,
                   'error': logging.ERROR,
                   'critical': logging.CRITICAL}
 
-class LogFile :
+
+class LogFile:
     '''
     file like object that wraps a logger object
     '''
-    def __init__(self, logger, level) :
+    def __init__(self, logger, level):
         self.logger = logger
         self.level = level
         self.tail = ''
 
-    def write(self, message) :
+    def write(self, message):
         lines = (self.tail + message).splitlines()
-        for line in lines[:-1] :
+        for line in lines[:-1]:
             self.logger.log(self.level, line)
-        if message.endswith('\n') :
+        if message.endswith('\n'):
             self.logger.log(self.level, lines[-1])
             self.tail = ''
-        elif len(lines) > 0 :
+        elif len(lines) > 0:
             self.tail = lines[-1]
-        else :
+        else:
             self.tail = ''
-                                
 
-    def flush(self, flush_tail = False) :
-        if flush_tail and self.tail :
+    def flush(self, flush_tail=False):
+        if flush_tail and self.tail:
             self.logger.log(self.level, self.tail)
             self.tail = ''
-        for handler in self.logger.handlers :
+        for handler in self.logger.handlers:
             handler.flush()
-        
-
