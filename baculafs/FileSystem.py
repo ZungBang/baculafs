@@ -1050,6 +1050,9 @@ BaculaFS: exposes the Bacula catalog and storage as a Filesystem in USErspace
 
     bacula_version = _bextract_version()
 
+    # force -o sync_read
+    sys.argv.extend(['-o', 'sync_read'])
+
     server = FileSystem(version=(
                             "BaculaFS version: %s\nbextract version: %s\n"
                             "Python FUSE version: %s" %
